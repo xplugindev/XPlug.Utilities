@@ -310,3 +310,30 @@ internal error as a broken device, but handles "none" and a typed fault fine.
 Note that 401 responses in our log are normal: Genetec sends unauthenticated
 first, takes the digest challenge and retries. Each 401 should be followed by a
 200 for the same operation. Only unmatched 5xx responses are real failures.
+
+### Two Genetec messages that are not faults
+
+- *"Event service is missing from the RetrievedCapabilities. Events will not be
+  supported by the device."* — correct. ONVIF events are out of scope (spec 3);
+  Genetec logs this and carries on without motion events.
+- *"An error occurred while inquiring the certificate management capabilities."*
+  — Genetec is querying the ONVIF **Advanced Security** service, which we do not
+  advertise because there is no TLS yet (spec 71, v0.5). Nothing reaches our
+  device service: a grep for "Certificate" in our log finds nothing. Implementing
+  the device-service certificate getters does not silence it, and should not be
+  attempted again for that reason.
+
+### If a unit gets stuck
+
+*"Unit with guid {…} is already in the Unit Map"* means Genetec is holding a
+half-enrolled unit from an earlier failed attempt. Genetec caches the unit's
+capabilities, so fixing the device does not heal an already-broken unit. Delete
+it in Config Tool and add it again.
+
+### Genetec asks for UDP
+
+Genetec's SETUP is `Transport: RTP/AVP;unicast;client_port=…`, i.e. plain UDP,
+not the TCP interleaving spec 14 nominates as primary. Both work — ffmpeg pulls
+the same stream over either transport — so the server accepts what it is asked
+for. Worth remembering when reading a capture: seeing UDP negotiated is normal,
+not a fault.
