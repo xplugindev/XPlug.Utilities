@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>Screen2VMS</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Serilog.Extensions.Logging" />
+    <PackageReference Include="Serilog.Sinks.File" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Screen2VMS.Core\Screen2VMS.Core.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Camera\Screen2VMS.Camera.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Configuration\Screen2VMS.Configuration.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Engine\Screen2VMS.Engine.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Logging\Screen2VMS.Logging.csproj" />
+  </ItemGroup>
+
+</Project>

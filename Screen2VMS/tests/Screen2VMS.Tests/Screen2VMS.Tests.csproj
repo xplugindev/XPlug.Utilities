@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Screen2VMS.Core\Screen2VMS.Core.csproj" />
+    <ProjectReference Include="..\..\src\Screen2VMS.Camera\Screen2VMS.Camera.csproj" />
+    <ProjectReference Include="..\..\src\Screen2VMS.Configuration\Screen2VMS.Configuration.csproj" />
+    <ProjectReference Include="..\..\src\Screen2VMS.Discovery\Screen2VMS.Discovery.csproj" />
+    <ProjectReference Include="..\..\src\Screen2VMS.Onvif\Screen2VMS.Onvif.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

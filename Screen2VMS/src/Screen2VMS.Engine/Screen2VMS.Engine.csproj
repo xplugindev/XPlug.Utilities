@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Win32.SystemEvents" />
+    <PackageReference Include="System.Drawing.Common" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Screen2VMS.Core\Screen2VMS.Core.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Camera\Screen2VMS.Camera.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Encoding\Screen2VMS.Encoding.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Rtsp\Screen2VMS.Rtsp.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Onvif\Screen2VMS.Onvif.csproj" />
+    <ProjectReference Include="..\Screen2VMS.Discovery\Screen2VMS.Discovery.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Screen2VMS.Core\Screen2VMS.Core.csproj" />
+  </ItemGroup>
+
+</Project>
