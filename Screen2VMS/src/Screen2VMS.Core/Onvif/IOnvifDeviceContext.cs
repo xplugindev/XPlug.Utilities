@@ -43,6 +43,17 @@ public interface IOnvifDeviceContext
     byte[]? CaptureSnapshotJpeg();
 
     /// <summary>
+    /// Asks the encoder for an immediate key frame.
+    /// </summary>
+    /// <remarks>
+    /// ONVIF calls this a synchronisation point. Genetec uses it to get a
+    /// decodable picture straight away instead of waiting for the next GOP, and
+    /// faulting on it makes a live view look broken for up to a second every
+    /// time the VMS reconnects.
+    /// </remarks>
+    void RequestSynchronizationPoint();
+
+    /// <summary>
     /// Applies encoder settings a VMS asked for.
     /// </summary>
     /// <remarks>

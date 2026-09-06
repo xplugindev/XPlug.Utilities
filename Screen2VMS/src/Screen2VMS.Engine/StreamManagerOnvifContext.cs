@@ -108,6 +108,12 @@ public sealed class StreamManagerOnvifContext : IOnvifDeviceContext
         }
     }
 
+    public void RequestSynchronizationPoint()
+    {
+        logger.LogDebug("A VMS asked for a synchronisation point; forcing a key frame.");
+        streamManager.Encoder?.RequestKeyFrame();
+    }
+
     public void ApplyVideoConfiguration(OnvifVideoConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);

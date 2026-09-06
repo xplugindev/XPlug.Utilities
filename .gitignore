@@ -56,3 +56,6 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 /.vs
+
+# Visual Studio workspace state, in any project folder
+.vs/

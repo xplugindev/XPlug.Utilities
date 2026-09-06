@@ -115,6 +115,67 @@ public static class NetworkAddressResolver
             .ToList();
     }
 
+    /// <summary>
+    /// The default gateway on the adapter that owns <paramref name="localAddress"/>.
+    /// </summary>
+    /// <remarks>
+    /// A VMS asks for this while building the device's network capabilities.
+    /// Returns null when the adapter has no gateway, which is a normal answer
+    /// rather than an error.
+    /// </remarks>
+    public static IPAddress? GetDefaultGatewayFor(IPAddress localAddress)
+    {
+        ArgumentNullException.ThrowIfNull(localAddress);
+
+        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (adapter.OperationalStatus != OperationalStatus.Up)
+            {
+                continue;
+            }
+
+            var properties = adapter.GetIPProperties();
+
+            if (!properties.UnicastAddresses.Any(a => a.Address.Equals(localAddress)))
+            {
+                continue;
+            }
+
+            return properties.GatewayAddresses
+                .Select(g => g.Address)
+                .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !a.Equals(IPAddress.Any));
+        }
+
+        return null;
+    }
+
+    /// <summary>The IPv4 DNS servers on the adapter that owns <paramref name="localAddress"/>.</summary>
+    public static IReadOnlyList<IPAddress> GetDnsServersFor(IPAddress localAddress)
+    {
+        ArgumentNullException.ThrowIfNull(localAddress);
+
+        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (adapter.OperationalStatus != OperationalStatus.Up)
+            {
+                continue;
+            }
+
+            var properties = adapter.GetIPProperties();
+
+            if (!properties.UnicastAddresses.Any(a => a.Address.Equals(localAddress)))
+            {
+                continue;
+            }
+
+            return properties.DnsAddresses
+                .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
+                .ToList();
+        }
+
+        return [];
+    }
+
     private static string? GetMacAddress(NetworkInterface adapter)
     {
         var bytes = adapter.GetPhysicalAddress().GetAddressBytes();

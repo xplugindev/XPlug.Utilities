@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Screen2VMS.Core.Networking;
 using Screen2VMS.Core.Onvif;
 using Screen2VMS.Discovery;
 using SharpOnvifCommon;
@@ -287,6 +288,184 @@ public class Screen2VmsDeviceService : DeviceBase
         Name = context.DeviceInfo.Name.Replace(' ', '-'),
     };
 
+    // --- Network settings ---------------------------------------------------
+    //
+    // Genetec's ONVIF driver calls this whole family from GetNetworkSettingsCaps
+    // while it builds the unit's capabilities. Leaving any of them to the base
+    // class produces a SOAP fault, which aborts capability discovery and leaves
+    // the unit in Error - the operation is optional in ONVIF, but faulting is
+    // not the same as answering "nothing configured". Every one of these
+    // therefore returns a truthful, empty answer rather than an error.
+
+    /// <summary>
+    /// The default gateway for the interface Screen2VMS is reachable on.
+    /// </summary>
+    /// <remarks>
+    /// This is the call that used to fault and stop Genetec adding the unit.
+    /// </remarks>
+    public override NetworkGateway GetNetworkDefaultGateway()
+    {
+        logger.LogDebug("OnvifRequest: GetNetworkDefaultGateway");
+
+        var gateway = NetworkAddressResolver.GetDefaultGatewayFor(GetLocalIpAddress());
+
+        return new NetworkGateway
+        {
+            IPv4Address = gateway is null ? [] : [gateway.ToString()],
+        };
+    }
+
+    public override DNSInformation GetDNS()
+    {
+        logger.LogDebug("OnvifRequest: GetDNS");
+
+        var servers = NetworkAddressResolver.GetDnsServersFor(GetLocalIpAddress())
+            .Select(address => new SharpOnvifServer.DeviceMgmt.IPAddress
+            {
+                Type = IPType.IPv4,
+                IPv4Address = address.ToString(),
+            })
+            .ToArray();
+
+        return new DNSInformation
+        {
+            FromDHCP = true,
+            DNSFromDHCP = servers,
+            SearchDomain = [],
+        };
+    }
+
+    /// <summary>
+    /// Time is taken from the host clock, not NTP.
+    /// </summary>
+    /// <remarks>
+    /// Reported as DHCP-supplied with no servers, which is the honest answer:
+    /// Screen2VMS does not manage time itself.
+    /// </remarks>
+    public override NTPInformation GetNTP()
+    {
+        logger.LogDebug("OnvifRequest: GetNTP");
+
+        return new NTPInformation
+        {
+            FromDHCP = true,
+            NTPFromDHCP = [],
+        };
+    }
+
+    public override GetNetworkProtocolsResponse GetNetworkProtocols(GetNetworkProtocolsRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetNetworkProtocols");
+
+        return new GetNetworkProtocolsResponse
+        {
+            NetworkProtocols =
+            [
+                new NetworkProtocol
+                {
+                    Name = NetworkProtocolType.HTTP,
+                    Enabled = true,
+                    Port = [options.Port],
+                },
+                new NetworkProtocol
+                {
+                    Name = NetworkProtocolType.HTTPS,
+                    Enabled = false,
+                    Port = [443],
+                },
+                new NetworkProtocol
+                {
+                    Name = NetworkProtocolType.RTSP,
+                    Enabled = true,
+                    Port = [options.RtspPort],
+                },
+            ],
+        };
+    }
+
+    /// <summary>Zero-configuration addressing is not used; the host owns the address.</summary>
+    public override NetworkZeroConfiguration GetZeroConfiguration()
+    {
+        logger.LogDebug("OnvifRequest: GetZeroConfiguration");
+
+        return new NetworkZeroConfiguration
+        {
+            InterfaceToken = "eth0",
+            Enabled = false,
+            Addresses = [],
+        };
+    }
+
+    /// <summary>The device answers WS-Discovery probes (spec 17).</summary>
+    public override DiscoveryMode GetDiscoveryMode()
+    {
+        logger.LogDebug("OnvifRequest: GetDiscoveryMode");
+        return DiscoveryMode.Discoverable;
+    }
+
+    /// <summary>Remote (proxy) discovery is not supported.</summary>
+    public override DiscoveryMode GetRemoteDiscoveryMode()
+    {
+        logger.LogDebug("OnvifRequest: GetRemoteDiscoveryMode");
+        return DiscoveryMode.NonDiscoverable;
+    }
+
+    public override GetDPAddressesResponse GetDPAddresses(GetDPAddressesRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetDPAddresses");
+        return new GetDPAddressesResponse { DPAddress = [] };
+    }
+
+    /// <summary>Dynamic DNS is not supported, reported as such rather than faulting.</summary>
+    public override DynamicDNSInformation GetDynamicDNS()
+    {
+        logger.LogDebug("OnvifRequest: GetDynamicDNS");
+
+        return new DynamicDNSInformation
+        {
+            Type = DynamicDNSType.NoUpdate,
+        };
+    }
+
+    // --- Certificates -------------------------------------------------------
+    //
+    // TLS is a later milestone (spec 25, 71 v0.5), so the device holds no
+    // certificates. Genetec asks anyway while enrolling and logs "an error
+    // occurred while inquiring the certificate management capabilities" if the
+    // request faults. An empty list is the accurate answer and keeps the
+    // enrolment clean.
+
+    public override GetCertificatesResponse GetCertificates(GetCertificatesRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetCertificates");
+        return new GetCertificatesResponse { NvtCertificate = [] };
+    }
+
+    public override GetCACertificatesResponse GetCACertificates(GetCACertificatesRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetCACertificates");
+        return new GetCACertificatesResponse { CACertificate = [] };
+    }
+
+    public override GetCertificatesStatusResponse GetCertificatesStatus(GetCertificatesStatusRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetCertificatesStatus");
+        return new GetCertificatesStatusResponse { CertificateStatus = [] };
+    }
+
+    /// <summary>Client certificates are not required; the device uses password authentication.</summary>
+    public override bool GetClientCertificateMode()
+    {
+        logger.LogDebug("OnvifRequest: GetClientCertificateMode");
+        return false;
+    }
+
+    public override GetDot1XConfigurationsResponse GetDot1XConfigurations(GetDot1XConfigurationsRequest request)
+    {
+        logger.LogDebug("OnvifRequest: GetDot1XConfigurations");
+        return new GetDot1XConfigurationsResponse { Dot1XConfiguration = [] };
+    }
+
     /// <summary>
     /// The scheme and authority a client reached us on.
     /// </summary>
@@ -305,12 +484,28 @@ public class Screen2VmsDeviceService : DeviceBase
         return $"http://{options.FallbackAddress}:{options.Port}";
     }
 
-    private string GetLocalAddress()
+    private string GetLocalAddress() => GetLocalIpAddress().ToString();
+
+    /// <summary>
+    /// The local address this request arrived on, as an IP address.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to the configured address when the request came over loopback
+    /// or there is no HTTP context, so network answers describe the adapter a
+    /// VMS would actually use.
+    /// </remarks>
+    private System.Net.IPAddress GetLocalIpAddress()
     {
         var local = httpContextAccessor.HttpContext?.Connection.LocalIpAddress;
-        return local is not null && !System.Net.IPAddress.IsLoopback(local)
-            ? local.MapToIPv4().ToString()
-            : options.FallbackAddress;
+
+        if (local is not null && !System.Net.IPAddress.IsLoopback(local))
+        {
+            return local.MapToIPv4();
+        }
+
+        return System.Net.IPAddress.TryParse(options.FallbackAddress, out var configured)
+            ? configured
+            : System.Net.IPAddress.Loopback;
     }
 
     private static string FormatMac(string macAddress) =>

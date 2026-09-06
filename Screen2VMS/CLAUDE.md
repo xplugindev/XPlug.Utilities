@@ -19,7 +19,7 @@ wrong.
 | 2 | H.264 encoding (Media Foundation MFT) | **Done, verified with ffmpeg** |
 | 3 | RTSP server, VLC plays the stream | **Done, verified with VLC + ffmpeg** |
 | 4 | ONVIF device/media services + WS-Discovery | **Done, 28/28 conformance checks** |
-| 5 | Genetec discovers, adds, displays, records | **Built, not verified** — needs Genetec |
+| 5 | Genetec discovers, adds, displays, records | Discovery + full ONVIF interrogation working against real Genetec 5.14 |
 | 6 | XProtect discovers, adds, displays, records | **Built, not verified** — needs XProtect |
 | 7 | Stability, reconnect, sleep/resume | Implemented; soak run done, 24-hour run outstanding |
 
@@ -270,3 +270,43 @@ of it is the ASP.NET Core and CoreWCF host living inside a WPF process. That is
 a size problem, not a leak, and reducing it is optimisation work nobody has done
 yet. The 24-hour run in spec 68 phase 7 is still outstanding; use
 `tools/Invoke-Soak.ps1 -Minutes 1440`.
+
+---
+
+## What Genetec actually calls (5.14)
+
+Verified against a real Genetec Security Center 5.14 Archiver on the same host.
+Genetec's own log at
+`C:\ProgramData\Genetec Security Center 5.14\Logs\Baseline_LogTargets__UnitControlHost_*.log`
+names the failing operation directly — grep it for the unit id, which Genetec
+derives from our MAC (`00000000-0000-0000-0007-<mac>`). That is far faster than
+guessing from our side.
+
+**The bug that blocked enrolment:** Genetec calls `GetNetworkDefaultGateway`
+inside `GetNetworkSettingsCapsAsync`, which runs inside `GetCapabilitiesAsync`.
+`DeviceBase` faulted, capability discovery aborted, and the unit sat in Error
+with only "The server was unable to process the request" to show for it.
+
+Beyond the ONVIF spec's core, Genetec also calls, and will fault the enrolment
+if any of them return an internal error:
+
+- `GetNetworkDefaultGateway`, `GetDNS`, `GetNTP`, `GetNetworkProtocols`,
+  `GetZeroConfiguration`, `GetDiscoveryMode`, `GetDynamicDNS`, `GetHostname`
+- `GetGuaranteedNumberOfVideoEncoderInstances`
+- `SetSynchronizationPoint` — this is Genetec asking for a key frame, and it
+  maps onto `IVideoEncoder.RequestKeyFrame`
+- `GetAudioOutputs`, `GetAudioSources`, the audio configuration and options
+  getters, `GetMetadataConfigurations`, `GetVideoAnalyticsConfigurations`,
+  `GetOSDs`, `GetVideoSourceModes`
+- `CreateProfile` and `AddVideoSourceConfiguration` — Genetec tries to build its
+  own profile
+
+**The rule this taught us:** for anything the device does not have, answer with
+an empty collection, and where refusal is genuinely required use the ONVIF fault
+the spec defines (`CreateProfile` returns `MaxNVTProfiles`, a 400). Never let an
+optional operation reach the base class and produce a 500 — a VMS treats an
+internal error as a broken device, but handles "none" and a typed fault fine.
+
+Note that 401 responses in our log are normal: Genetec sends unauthenticated
+first, takes the digest challenge and retries. Each 401 should be followed by a
+200 for the same operation. Only unmatched 5xx responses are real failures.

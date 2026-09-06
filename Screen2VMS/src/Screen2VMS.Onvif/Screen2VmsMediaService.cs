@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Screen2VMS.Core.Onvif;
+using SharpOnvifServer;
 using SharpOnvifServer.Media;
 
 namespace Screen2VMS.Onvif;
@@ -273,6 +274,181 @@ public class Screen2VmsMediaService : MediaBase
         context.ApplyVideoConfiguration(updated);
     }
 
+    /// <summary>
+    /// Forces a key frame, which is what ONVIF calls a synchronisation point.
+    /// </summary>
+    /// <remarks>
+    /// Genetec calls this whenever it (re)starts a stream. Faulting here leaves
+    /// the live view black until the next GOP boundary.
+    /// </remarks>
+    public override void SetSynchronizationPoint(string ProfileToken)
+    {
+        EnsureProfileToken(ProfileToken);
+        logger.LogDebug("OnvifRequest: SetSynchronizationPoint");
+        context.RequestSynchronizationPoint();
+    }
+
+    /// <summary>
+    /// How many encoder instances the device guarantees.
+    /// </summary>
+    /// <remarks>
+    /// Exactly one: a single camera feeding a single encoder that every client
+    /// shares (spec 33).
+    /// </remarks>
+    public override GetGuaranteedNumberOfVideoEncoderInstancesResponse GetGuaranteedNumberOfVideoEncoderInstances(
+        GetGuaranteedNumberOfVideoEncoderInstancesRequest request) =>
+        new()
+        {
+            TotalNumber = 1,
+            H264 = 1,
+            JPEG = 0,
+            MPEG4 = 0,
+        };
+
+    /// <summary>
+    /// Refuses to create a second profile, with the fault ONVIF defines for it.
+    /// </summary>
+    /// <remarks>
+    /// The device has one fixed profile (spec 12). Genetec tries to create its
+    /// own and handles a proper MaxNVTProfiles fault by falling back to the
+    /// existing one - but a generic internal error tells it nothing and aborts
+    /// the enrolment.
+    /// </remarks>
+    public override Profile CreateProfile(string Name, string Token)
+    {
+        logger.LogDebug("OnvifRequest: CreateProfile '{Name}' refused; the device has one fixed profile.", Name);
+
+        OnvifErrors.ReturnSenderError(
+            "The maximum number of media profiles is already in use.",
+            "MaxNVTProfiles",
+            OnvifErrorNamespace,
+            System.Net.HttpStatusCode.BadRequest);
+
+        // ReturnSenderError throws; this only satisfies the compiler.
+        return BuildProfile();
+    }
+
+    /// <summary>Deleting the fixed profile is not permitted, per ONVIF.</summary>
+    public override void DeleteProfile(string ProfileToken)
+    {
+        logger.LogDebug("OnvifRequest: DeleteProfile refused; the profile is fixed.");
+
+        OnvifErrors.ReturnSenderError(
+            "The media profile is fixed and cannot be deleted.",
+            "DeletionOfFixedProfile",
+            OnvifErrorNamespace,
+            System.Net.HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Accepts a configuration the profile already carries.
+    /// </summary>
+    /// <remarks>
+    /// The profile is fixed, so the only configuration that can be added is the
+    /// one already in it. Saying yes to that is honest and lets a VMS finish
+    /// setting the profile up; anything else is refused properly.
+    /// </remarks>
+    public override void AddVideoSourceConfiguration(string ProfileToken, string ConfigurationToken)
+    {
+        EnsureProfileToken(ProfileToken);
+        AcceptExistingConfiguration(ConfigurationToken, VideoSourceConfigurationToken, "video source");
+    }
+
+    public override void AddVideoEncoderConfiguration(string ProfileToken, string ConfigurationToken)
+    {
+        EnsureProfileToken(ProfileToken);
+        AcceptExistingConfiguration(ConfigurationToken, VideoEncoderConfigurationToken, "video encoder");
+    }
+
+    // --- Things this device does not have -----------------------------------
+    //
+    // Audio, analytics, metadata and OSD are all out of scope (spec 3). A VMS
+    // enumerates them anyway while adding a unit, and there is a world of
+    // difference between "none" and an internal error: the first is a normal
+    // camera with no microphone, the second aborts the enrolment. Every one of
+    // these therefore answers with an empty collection.
+
+    public override AudioEncoderConfigurationOptions GetAudioEncoderConfigurationOptions(
+        string ConfigurationToken,
+        string ProfileToken) =>
+        new() { Options = [] };
+
+    public override AudioDecoderConfigurationOptions GetAudioDecoderConfigurationOptions(
+        string ConfigurationToken,
+        string ProfileToken) =>
+        new();
+
+    public override GetAudioOutputsResponse GetAudioOutputs(GetAudioOutputsRequest request) =>
+        new() { AudioOutputs = [] };
+
+    public override GetAudioSourcesResponse GetAudioSources(GetAudioSourcesRequest request) =>
+        new() { AudioSources = [] };
+
+    public override GetAudioSourceConfigurationsResponse GetAudioSourceConfigurations(
+        GetAudioSourceConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetAudioEncoderConfigurationsResponse GetAudioEncoderConfigurations(
+        GetAudioEncoderConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetAudioDecoderConfigurationsResponse GetAudioDecoderConfigurations(
+        GetAudioDecoderConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetAudioOutputConfigurationsResponse GetAudioOutputConfigurations(
+        GetAudioOutputConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetCompatibleAudioSourceConfigurationsResponse GetCompatibleAudioSourceConfigurations(
+        GetCompatibleAudioSourceConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetCompatibleAudioEncoderConfigurationsResponse GetCompatibleAudioEncoderConfigurations(
+        GetCompatibleAudioEncoderConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetMetadataConfigurationsResponse GetMetadataConfigurations(
+        GetMetadataConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetCompatibleMetadataConfigurationsResponse GetCompatibleMetadataConfigurations(
+        GetCompatibleMetadataConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetVideoAnalyticsConfigurationsResponse GetVideoAnalyticsConfigurations(
+        GetVideoAnalyticsConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetCompatibleVideoAnalyticsConfigurationsResponse GetCompatibleVideoAnalyticsConfigurations(
+        GetCompatibleVideoAnalyticsConfigurationsRequest request) =>
+        new() { Configurations = [] };
+
+    public override GetOSDsResponse GetOSDs(GetOSDsRequest request) =>
+        new() { OSDs = [] };
+
+    /// <summary>The camera has one mode: whatever the capture pipeline negotiated.</summary>
+    public override GetVideoSourceModesResponse GetVideoSourceModes(GetVideoSourceModesRequest request) =>
+        new() { VideoSourceModes = [] };
+
+    private void AcceptExistingConfiguration(string requested, string existing, string description)
+    {
+        if (string.Equals(requested, existing, StringComparison.Ordinal))
+        {
+            logger.LogDebug("OnvifRequest: Add{Description} configuration is already in the profile.", description);
+            return;
+        }
+
+        OnvifErrors.ReturnSenderError(
+            $"The only {description} configuration is '{existing}'.",
+            "ConfigurationConflict",
+            OnvifErrorNamespace,
+            System.Net.HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>Namespace ONVIF fault subcodes live in.</summary>
+    private const string OnvifErrorNamespace = "http://www.onvif.org/ver10/error";
+
     private Profile BuildProfile() => new()
     {
         token = ProfileToken,
@@ -348,7 +524,7 @@ public class Screen2VmsMediaService : MediaBase
         if (!string.IsNullOrEmpty(profileToken)
             && !string.Equals(profileToken, ProfileToken, StringComparison.Ordinal))
         {
-            SharpOnvifServer.OnvifErrors.ReturnSenderInvalidArg();
+            OnvifErrors.ReturnSenderInvalidArg();
         }
     }
 }
