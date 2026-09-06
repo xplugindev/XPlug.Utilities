@@ -5,6 +5,10 @@
 > several decisions here were taken on the basis that it stays internal. The
 > table in `README.md` under "Scope: personal utility, not a product" lists them
 > and is the checklist to work through if that ever changes.
+>
+> It is published publicly under MIT, with every bundled dependency audited
+> (`THIRD-PARTY-NOTICES.md`). That is a licensing decision, not a quality claim:
+> nothing above changes because the binary is downloadable.
 
 Turns a Windows webcam into an ONVIF Profile-S IP camera so Genetec Security
 Center and Milestone XProtect can discover it, stream it and record it over
@@ -45,8 +49,13 @@ Settled with the project owner. Do not relitigate.
   MFTs needing an event pump, which is the v0.7 milestone, not the MVP.
 - **RTSP: `SharpRTSPServer` in-process.** Not MediaMTX, not a child process.
 - **ONVIF: `SharpOnvifServer` (CoreWCF).** See the correction below.
-- **Licensing: internal use only.** GPL is acceptable, so ffmpeg and ffprobe are
-  fine as *debugging* tools. They must not become shipping dependencies.
+- **Licensing: MIT, published on GitHub Releases.** Every one of the 77 bundled
+  packages is MIT or Apache-2.0 — audited from the `.nuspec` files, recorded in
+  `THIRD-PARTY-NOTICES.md`, and that file is what satisfies the attribution
+  obligations of a self-contained single-file build. GPL tools (ffmpeg, ffprobe,
+  VLC) stay *debugging* tools; the moment one becomes a shipping dependency the
+  audit is void. Adding a package means re-running the audit — the command is at
+  the bottom of the notices file.
 - **Target framework: `net8.0`** (`net8.0-windows` where Windows APIs are used).
 - **Test targets: both Genetec and XProtect are available** on the owner's
   network.

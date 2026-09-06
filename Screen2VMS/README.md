@@ -16,22 +16,43 @@ Acceptance against Genetec and XProtect themselves is still outstanding.**
 
 ---
 
+## Download
+
+Grab `Screen2VMS.exe` from the
+[latest release](https://github.com/xplugindev/XPlug.Utilities/releases/latest).
+
+One file, about 79 MB. No installer, no .NET runtime to install, nothing to
+unpack — copy it anywhere and double-click it. Settings and logs go to
+`%ProgramData%\Screen2VMS\`; delete that folder and the executable to remove it
+completely.
+
+The binary is **not code-signed**, so Windows SmartScreen will show "Windows
+protected your PC" the first time. *More info → Run anyway* if you trust the
+source. If you would rather not, build it yourself — see
+[Building a standalone executable](#building-a-standalone-executable); the
+script is eight lines of `dotnet publish`.
+
+Read the scope note immediately below before you put this anywhere that matters.
+
+---
+
 ## Scope: personal utility, not a product
 
-This is a **personal / internal tool**, built for one person's own projects on an
-explicit "internal use only" basis. It sits in the shared `XPlug.Utilities`
-repository next to `DesktopSessionManager`, which makes it easy to mistake for
-team-owned production code. It is not.
+This is a **personal tool**, built for one person's own projects. It sits in the
+shared `XPlug.Utilities` repository next to `DesktopSessionManager`, which makes
+it easy to mistake for team-owned production code. It is not.
 
-It has not been through security review, ONVIF conformance testing, or any
-release process. Several design decisions were taken *because* it is internal,
-and each of them is wrong for a product:
+It is published under MIT and downloadable by anyone, which is a licensing
+decision and nothing more — it has not been through security review, ONVIF
+conformance testing, or any release process. Several design decisions were taken
+*because* it started as an internal tool, and each of them is wrong for a
+product:
 
 | Decision | Why it is fine here | Why it would not be elsewhere |
 |---|---|---|
 | No TLS anywhere — ONVIF, snapshots and RTSP are plaintext | Trusted LAN only | Credentials and video cross the wire in the clear |
 | Credential stored with DPAPI, machine scope | Keeps it out of a config file that gets copied around | Anyone who can run code on the box can recover it |
-| Licensing decided on "internal only" | GPL tooling (ffmpeg, VLC) is used for debugging only and ships with nothing; H.264 royalties rest on the Windows Media Foundation encoder licence | Both need a real review before distribution |
+| MIT, after a dependency audit but not a patent one | All 77 bundled packages are MIT or Apache-2.0, so redistribution is clean; ffmpeg and VLC are debugging tools that ship with nothing | AVC patent licensing was never reviewed — it rests on the Windows Media Foundation encoder rather than on anything shipped here |
 | ONVIF-compatible, not ONVIF-certified | Works with the clients it was tested against | Has never seen the ONVIF Device Test Tool; Profile S is deprecated for new conformance submissions after 31 March 2027 |
 | No installer, no code signing, no auto-update | Copy the .exe and run it | SmartScreen will flag it; there is no update path |
 
@@ -210,6 +231,31 @@ Screen2VMS.sln
 Every project depends only on `Screen2VMS.Core`. `Screen2VMS.Engine` composes
 the runtime and is deliberately free of WPF, so the same engine can run as a
 Windows service later.
+
+---
+
+## Licence
+
+Screen2VMS is released under the **MIT Licence** — see [`LICENSE`](../LICENSE)
+at the root of this repository. That file covers the whole `XPlug.Utilities`
+repository, `DesktopSessionManager` included, not just this folder.
+
+The published executable is self-contained, which means the .NET runtime and all
+77 dependencies are bundled inside it and redistributed with every download.
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) lists every one of them with
+its licence and copyright holder: 58 MIT, 19 Apache-2.0, no copyleft anywhere in
+the graph, so redistribution is unencumbered.
+
+Two things that file makes explicit and are worth repeating here:
+
+- **No codec is shipped.** H.264 encoding calls the encoder built into Windows
+  Media Foundation, so it runs under the licence of the Windows installation
+  doing the encoding. AVC patent licensing is not passed on by this download.
+- **ONVIF-compatible, not ONVIF-certified.** This implements the published
+  Profile S specification. It has never been through the ONVIF Device Test Tool
+  and is not affiliated with or endorsed by the ONVIF organisation.
+
+MIT means no warranty. Given the scope note above, take that literally.
 
 ---
 
