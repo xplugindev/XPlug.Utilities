@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using Screen2VMS.Core.Cameras;
 
-namespace Screen2VMS.Camera.Interop;
+namespace Screen2VMS.MediaFoundation;
 
 /// <summary>Reads the capture modes a device advertises on its video stream.</summary>
 internal static class MfModeReader

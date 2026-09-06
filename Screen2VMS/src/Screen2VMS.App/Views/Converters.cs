@@ -47,3 +47,26 @@ public sealed class CameraStateToBrushConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>Colours the status dot for a pipeline component (spec 63).</summary>
+public sealed class ComponentStateToBrushConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var key = value is Screen2VMS.Core.Diagnostics.ComponentState state
+            ? state switch
+            {
+                Screen2VMS.Core.Diagnostics.ComponentState.Running => "RunningBrush",
+                Screen2VMS.Core.Diagnostics.ComponentState.Starting => "FaultBrush",
+                Screen2VMS.Core.Diagnostics.ComponentState.Degraded => "FaultBrush",
+                Screen2VMS.Core.Diagnostics.ComponentState.Error => "ErrorBrush",
+                _ => "StoppedBrush",
+            }
+            : "StoppedBrush";
+
+        return Application.Current?.TryFindResource(key) as Brush ?? Brushes.Gray;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

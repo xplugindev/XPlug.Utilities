@@ -11,28 +11,31 @@ Screen2VMS presents itself on the LAN as an ONVIF Profile-S compatible video
 transmitter. A VMS finds it by WS-Discovery, reads its media profile over ONVIF,
 and pulls H.264 over RTSP exactly as it would from a physical IP camera.
 
-**Version 0.1 — in development. Phase 1 of 7 complete.**
+**Version 0.1 — the streaming device is complete and independently verified.
+Acceptance against Genetec and XProtect themselves is still outstanding.**
 
 ---
 
-## Current state
+## What works
 
-Phase 1 is finished and verified on real hardware: the application enumerates
-Windows capture devices, negotiates the closest supported mode to what you ask
-for, captures NV12 frames through Media Foundation, and shows a live preview.
+| | |
+|---|---|
+| Camera capture | Media Foundation, NV12, closest-supported-mode negotiation |
+| Encoding | H.264 Main profile, CBR, 1-second GOP, no B-frames |
+| Streaming | RTSP over TCP, multiple simultaneous clients from one encode |
+| Discovery | ONVIF WS-Discovery on UDP 3702 with Profile-S scopes |
+| ONVIF | Device and media services, 28 operations, snapshots |
+| Security | WS-Security UsernameToken and HTTP Digest, per-install password |
+| Recovery | Camera disconnect, camera busy, sleep and resume |
 
-Streaming is not implemented yet. There is no RTSP endpoint and no ONVIF service
-in this build — those are phases 3 and 4.
+Verified independently of the code that produced it: ffmpeg confirms the camera
+enumeration and delivered frame rate, ffmpeg decodes the H.264 with zero errors,
+VLC plays the RTSP stream over the LAN address, three concurrent clients receive
+byte-identical output, and an ONVIF probe drives 28 operations including
+negative authentication tests.
 
-| Phase | Delivers | State |
-|---|---|---|
-| 1 | Camera enumeration and live preview | Complete |
-| 2 | H.264 encoding | Planned |
-| 3 | RTSP server (`rtsp://<ip>:8554/live`) | Planned |
-| 4 | ONVIF device/media services, WS-Discovery | Planned |
-| 5 | Genetec Security Center integration | Planned |
-| 6 | Milestone XProtect integration | Planned |
-| 7 | Stability, reconnect, sleep/resume | Planned |
+Not yet done: adding the unit inside Genetec Config Tool or the XProtect
+Management Client. That needs the VMS software.
 
 ---
 
@@ -42,8 +45,9 @@ in this build — those are phases 3 and 4.
 - .NET 8 desktop runtime (or the .NET SDK to build)
 - A webcam
 
-No administrator rights, no internet connection, no cloud account, no licence
-server and no database. Everything runs on the local machine and the LAN.
+No administrator rights for normal operation, no internet connection, no cloud
+account, no licence server and no database. Optionally one UAC prompt if you use
+the built-in button to add firewall rules.
 
 ---
 
@@ -55,13 +59,27 @@ dotnet build
 dotnet run --project src/Screen2VMS.App
 ```
 
-Pick a camera, resolution and frame rate, then press **Start**. The status panel
-shows the mode actually negotiated, the measured frame rate and the frame
-counters.
+Pick a camera, resolution, frame rate and bitrate, then press **Start**. The
+window then shows everything needed to add the camera to a VMS:
 
-If the requested mode is unavailable the closest supported one is selected
-automatically rather than failing — asking for 1920x1080 at 30 fps on a camera
-that tops out at 1280x720 gets you 1280x720, not an error.
+- the ONVIF address, e.g. `http://192.168.1.50:8000/onvif/device_service`
+- the RTSP address, e.g. `rtsp://192.168.1.50:8554/live`
+- the user name and the password generated for this installation
+
+The RTSP stream requires those same credentials, which is what a real IP camera
+does and what stops anyone on the LAN from watching. A VMS handles this by
+itself. To open the stream by hand, put them in the URL:
+
+```
+vlc rtsp://admin:<password>@192.168.1.50:8554/live
+```
+
+Set `rtsp.requireAuthentication` to `false` in `config.json` if you need an
+anonymous stream to diagnose a client that cannot authenticate.
+
+If the requested capture mode is unavailable the closest supported one is used
+rather than failing — asking for 1920x1080 at 30 fps on a camera that tops out
+at 1280x720 gets you 1280x720, not an error.
 
 Run the tests with:
 
@@ -69,22 +87,51 @@ Run the tests with:
 dotnet test tests/Screen2VMS.Tests
 ```
 
-They cover mode negotiation, pixel conversion and configuration round-tripping,
-and need no camera attached.
+69 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
+ONVIF discovery scopes, credential protection and configuration round-tripping.
+None of them need a camera.
+
+---
+
+## Adding it to a VMS
+
+1. Put the machine on the same subnet as the VMS server. WS-Discovery is
+   multicast and does not cross subnets; from another VLAN, add the device by IP
+   instead.
+2. Press **Firewall Rules** once if inbound traffic is blocked. This is the only
+   action that asks for administrator rights.
+3. In the VMS, add an ONVIF device and run discovery. "Screen2VMS Virtual
+   Camera" should appear.
+4. Authenticate with the user name and password from the window.
+
+**Genetec Security Center** — Config Tool → add video unit → ONVIF → discover.
+
+**Milestone XProtect** — Management Client → Add Hardware → ONVIF driver →
+discover.
 
 ---
 
 ## Where things are kept
 
 ```
-%ProgramData%\Screen2VMS\config.json    settings and device identity
+%ProgramData%\Screen2VMS\config.json    settings, device identity, credential
 %ProgramData%\Screen2VMS\Logs\          daily rolling logs
 ```
 
-`config.json` holds a serial number and a synthetic MAC address generated on
-first run. A VMS uses these to recognise the camera, so they never change once
-written. Deleting the file resets them, and any VMS that had already added the
-unit will see a different camera afterwards.
+`config.json` holds a serial number, a synthetic MAC address and an encrypted
+password, all generated on first run. A VMS uses the serial and MAC to recognise
+the camera, so they never change once written. Deleting the file resets them and
+any VMS that had already added the unit will see a different camera.
+
+---
+
+## Ports
+
+| Port | Protocol | Purpose |
+|---|---|---|
+| 8554 | TCP | RTSP |
+| 8000 | TCP | ONVIF HTTP and JPEG snapshots |
+| 3702 | UDP | WS-Discovery |
 
 ---
 
@@ -93,42 +140,29 @@ unit will see a different camera afterwards.
 ```
 Screen2VMS.sln
 ├── src/
-│   ├── Screen2VMS.Core             interfaces, models, pure logic
-│   ├── Screen2VMS.Camera           Media Foundation capture
-│   ├── Screen2VMS.Encoding         H.264 encoder            (phase 2)
-│   ├── Screen2VMS.Rtsp             RTSP server              (phase 3)
-│   ├── Screen2VMS.Onvif            ONVIF SOAP services      (phase 4)
-│   ├── Screen2VMS.Discovery        WS-Discovery             (phase 4)
-│   ├── Screen2VMS.Configuration    JSON configuration
-│   ├── Screen2VMS.Logging          Serilog setup
-│   └── Screen2VMS.App              WPF user interface
+│   ├── Screen2VMS.Core              interfaces, models, pure logic
+│   ├── Screen2VMS.MediaFoundation   COM interop, shared by capture and encoding
+│   ├── Screen2VMS.Camera            Media Foundation capture
+│   ├── Screen2VMS.Encoding          H.264 encoder
+│   ├── Screen2VMS.Rtsp              RTSP server
+│   ├── Screen2VMS.Onvif             ONVIF device and media services
+│   ├── Screen2VMS.Discovery         WS-Discovery scopes
+│   ├── Screen2VMS.Configuration     JSON configuration and credential storage
+│   ├── Screen2VMS.Engine            pipeline, runtime, firewall, snapshots
+│   ├── Screen2VMS.Logging           Serilog setup
+│   └── Screen2VMS.App               WPF user interface
 ├── tests/Screen2VMS.Tests
-└── docs/protocol/                  captured VMS exchanges
+└── docs/protocol/                   captured VMS exchanges
 ```
 
-Every project depends only on `Screen2VMS.Core`, which depends on nothing.
-`Screen2VMS.App` is the only place they are wired together, which is what keeps
-the streaming engine free of WPF for the eventual Windows service.
-
----
-
-## Ports
-
-Once phases 3 and 4 land, Screen2VMS listens on:
-
-| Port | Protocol | Purpose |
-|---|---|---|
-| 8554 | TCP | RTSP |
-| 8000 | TCP | ONVIF HTTP |
-| 3702 | UDP | WS-Discovery |
-
-WS-Discovery is multicast and does not cross subnets — a VMS on a different VLAN
-will not find the device automatically and must add it by IP.
+Every project depends only on `Screen2VMS.Core`. `Screen2VMS.Engine` composes
+the runtime and is deliberately free of WPF, so the same engine can run as a
+Windows service later.
 
 ---
 
 ## Documentation
 
 - `PROJECT_INSTRUCTIONS.md` — the full product specification
-- `CLAUDE.md` — architecture notes, decisions, and the traps worth knowing about
-  before changing anything
+- `CLAUDE.md` — architecture, decisions, spec corrections, and the traps worth
+  knowing about before changing anything

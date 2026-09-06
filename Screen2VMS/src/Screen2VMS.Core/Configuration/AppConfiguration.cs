@@ -69,6 +69,19 @@ public sealed record RtspConfiguration
     public int Port { get; init; } = 8554;
 
     public string Path { get; init; } = "/live";
+
+    /// <summary>
+    /// Whether RTSP clients must authenticate, using the same credentials as
+    /// ONVIF.
+    /// </summary>
+    /// <remarks>
+    /// On by default, because that is how a real IP camera behaves and it is
+    /// what leaving the video stream open to anyone on the LAN would otherwise
+    /// mean. A VMS takes the credentials it authenticated to ONVIF with and
+    /// reuses them for the stream, so this is transparent to it. Turn it off
+    /// only to diagnose a client that cannot authenticate.
+    /// </remarks>
+    public bool RequireAuthentication { get; init; } = true;
 }
 
 public sealed record OnvifConfiguration

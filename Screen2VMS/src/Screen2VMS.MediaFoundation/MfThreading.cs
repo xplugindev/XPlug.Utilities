@@ -1,6 +1,6 @@
 using System.Runtime.ExceptionServices;
 
-namespace Screen2VMS.Camera.Interop;
+namespace Screen2VMS.MediaFoundation;
 
 /// <summary>
 /// Scopes an MFStartup/MFShutdown pair to a single thread.

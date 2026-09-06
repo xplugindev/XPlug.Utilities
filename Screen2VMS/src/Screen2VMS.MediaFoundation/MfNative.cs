@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Screen2VMS.Camera.Interop;
+namespace Screen2VMS.MediaFoundation;
 
 /// <summary>Media Foundation entry points and the HRESULTs worth naming.</summary>
 internal static class MfNative
@@ -63,6 +63,28 @@ internal static class MfNative
 
     [DllImport("ole32.dll", ExactSpelling = true)]
     internal static extern void CoTaskMemFree(IntPtr ptr);
+
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    internal static extern int MFCreateSample(out IMFSample sample);
+
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    internal static extern int MFCreateMemoryBuffer(int maxLength, out IMFMediaBuffer buffer);
+
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    internal static extern int MFCreateAlignedMemoryBuffer(int maxLength, int alignment, out IMFMediaBuffer buffer);
+
+    /// <summary>
+    /// Enumerates transforms. The type-info arguments are passed as raw
+    /// pointers so either can be omitted with <see cref="IntPtr.Zero"/>.
+    /// </summary>
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    internal static extern int MFTEnumEx(
+        Guid category,
+        uint flags,
+        IntPtr inputType,
+        IntPtr outputType,
+        out IntPtr activateArray,
+        out uint count);
 
     /// <summary>
     /// Reads an attribute that packs two 32-bit values into one 64-bit slot -

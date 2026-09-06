@@ -462,7 +462,9 @@ The goal is not "valid ONVIF XML" but "ONVIF accepted by Genetec and XProtect".
 Keep captured request/response examples in `docs/protocol/genetec/` and
 `docs/protocol/xprotect/`. Do not commit credentials.
 
-> **Correction:** no mature .NET ONVIF *server* library exists. See `CLAUDE.md`.
+> **Correction:** §66's advice was followed and a suitable library does exist —
+> `SharpOnvifServer` over CoreWCF. Four of its media operations declare
+> malformed SOAP actions and are corrected at runtime. See `CLAUDE.md`.
 
 ## 68–69. Development phases
 

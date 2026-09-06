@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
-using Screen2VMS.Camera.Interop;
+using Screen2VMS.MediaFoundation;
 using Screen2VMS.Core.Cameras;
 
 namespace Screen2VMS.Camera;

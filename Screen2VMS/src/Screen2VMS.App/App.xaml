@@ -7,16 +7,28 @@
         <views:InverseBooleanConverter x:Key="InverseBoolean" />
         <views:BooleanToCollapsedConverter x:Key="BooleanToCollapsed" />
         <views:CameraStateToBrushConverter x:Key="StateToBrush" />
+        <views:ComponentStateToBrushConverter x:Key="ComponentStateToBrush" />
 
-        <SolidColorBrush x:Key="WindowBackground" Color="#FF1E1E1E" />
+        <SolidColorBrush x:Key="WindowBackground" Color="#FF1B1B1C" />
         <SolidColorBrush x:Key="PanelBackground" Color="#FF252526" />
-        <SolidColorBrush x:Key="PanelBorder" Color="#FF3F3F46" />
+        <SolidColorBrush x:Key="PanelBorder" Color="#FF3A3A3F" />
+        <SolidColorBrush x:Key="FieldBackground" Color="#FF1E1E20" />
         <SolidColorBrush x:Key="PrimaryText" Color="#FFF1F1F1" />
-        <SolidColorBrush x:Key="SecondaryText" Color="#FF9D9D9D" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#FF0E7AD1" />
+        <SolidColorBrush x:Key="SecondaryText" Color="#FF9A9A9E" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF2F8FE0" />
         <SolidColorBrush x:Key="RunningBrush" Color="#FF4EC94E" />
-        <SolidColorBrush x:Key="StoppedBrush" Color="#FF6E6E6E" />
+        <SolidColorBrush x:Key="StoppedBrush" Color="#FF5E5E62" />
         <SolidColorBrush x:Key="FaultBrush" Color="#FFE0A030" />
+        <SolidColorBrush x:Key="ErrorBrush" Color="#FFE05050" />
+
+        <Style x:Key="Panel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PanelBackground}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
 
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
@@ -33,7 +45,19 @@
             <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+
+        <Style x:Key="Field" TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource FieldBackground}" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="CaretBrush" Value="{StaticResource PrimaryText}" />
+            <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
         </Style>
 
         <Style TargetType="Button">

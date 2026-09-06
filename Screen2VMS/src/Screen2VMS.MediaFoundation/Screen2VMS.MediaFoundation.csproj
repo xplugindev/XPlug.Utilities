@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Screen2VMS.Core\Screen2VMS.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The interop stays internal; capture and encoding are its only consumers. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Screen2VMS.Camera</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Screen2VMS.Encoding</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

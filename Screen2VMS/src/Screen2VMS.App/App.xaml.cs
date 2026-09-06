@@ -6,6 +6,7 @@ using Screen2VMS.Camera;
 using Screen2VMS.Configuration;
 using Screen2VMS.Core.Cameras;
 using Screen2VMS.Core.Configuration;
+using Screen2VMS.Engine;
 using Screen2VMS.Logging;
 
 namespace Screen2VMS.App;
@@ -92,6 +93,7 @@ public partial class App : Application
         collection.AddLogging();
         collection.AddSingleton(configuration);
         collection.AddSingleton<ICameraSourceService, MediaFoundationCameraSourceService>();
+        collection.AddSingleton<Screen2VmsRuntime>();
         collection.AddSingleton(Dispatcher);
         collection.AddSingleton<MainViewModel>();
 

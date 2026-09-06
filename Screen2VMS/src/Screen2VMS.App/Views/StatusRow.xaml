@@ -1,0 +1,32 @@
+<UserControl x:Class="Screen2VMS.App.Views.StatusRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <Grid Margin="0,0,0,8">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="86" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Ellipse Width="9"
+                 Height="9"
+                 Margin="0,0,8,0"
+                 VerticalAlignment="Center"
+                 Fill="{Binding State, ElementName=Root, Converter={StaticResource ComponentStateToBrush}}" />
+
+        <TextBlock Grid.Column="1"
+                   Text="{Binding Label, ElementName=Root}"
+                   Foreground="{StaticResource SecondaryText}"
+                   FontSize="11"
+                   VerticalAlignment="Center" />
+
+        <TextBlock Grid.Column="2"
+                   Text="{Binding Detail, ElementName=Root}"
+                   Foreground="{StaticResource PrimaryText}"
+                   FontSize="11"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"
+                   ToolTip="{Binding Detail, ElementName=Root}" />
+    </Grid>
+</UserControl>

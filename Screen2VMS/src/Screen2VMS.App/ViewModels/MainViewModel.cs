@@ -1,44 +1,54 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using Screen2VMS.App.Views;
+using Screen2VMS.Configuration;
 using Screen2VMS.Core.Cameras;
 using Screen2VMS.Core.Configuration;
+using Screen2VMS.Core.Diagnostics;
+using Screen2VMS.Engine;
 
 namespace Screen2VMS.App.ViewModels;
 
 /// <summary>
-/// Drives the Phase 1 window: pick a camera, start it, watch it run.
+/// Drives the main window (spec 28, 63).
 /// </summary>
+/// <remarks>
+/// Presentation only. Everything it shows comes from
+/// <see cref="Screen2VmsRuntime"/>, which knows nothing about WPF.
+/// </remarks>
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly ICameraSourceService cameraService;
     private readonly IConfigurationService configuration;
+    private readonly Screen2VmsRuntime runtime;
     private readonly ILogger<MainViewModel> logger;
     private readonly PreviewSink preview;
-    private readonly DispatcherTimer statisticsTimer;
+    private readonly DispatcherTimer statusTimer;
+    private readonly Dispatcher dispatcher;
 
-    private ICameraSource? camera;
     private CameraDevice? selectedDevice;
     private Resolution? selectedResolution;
     private double selectedFrameRate = CameraSettings.DefaultFrameRate;
-    private CameraState state = CameraState.Stopped;
+    private int bitrateKbps = 4000;
     private string statusMessage = "Select a camera and press Start.";
-    private string activeModeText = "-";
-    private string measuredFpsText = "-";
-    private string framesText = "-";
+    private string onvifPassword = string.Empty;
     private bool disposed;
 
     public MainViewModel(
         ICameraSourceService cameraService,
         IConfigurationService configuration,
+        Screen2VmsRuntime runtime,
         Dispatcher dispatcher,
         ILogger<MainViewModel> logger)
     {
         this.cameraService = cameraService;
         this.configuration = configuration;
+        this.runtime = runtime;
+        this.dispatcher = dispatcher;
         this.logger = logger;
 
         preview = new PreviewSink(dispatcher);
@@ -48,15 +58,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StopCommand = new RelayCommand(Stop, () => IsRunning);
         RefreshCommand = new RelayCommand(RefreshDevices, () => !IsRunning);
         OpenLogsCommand = new RelayCommand(OpenLogs);
+        CopyStreamUriCommand = new RelayCommand(CopyStreamUri, () => !string.IsNullOrEmpty(StreamUri));
+        CopyOnvifUriCommand = new RelayCommand(CopyOnvifUri, () => !string.IsNullOrEmpty(OnvifUri));
+        CopyPasswordCommand = new RelayCommand(CopyPassword, () => !string.IsNullOrEmpty(OnvifPassword));
+        CreateFirewallRulesCommand = new RelayCommand(CreateFirewallRules);
 
-        statisticsTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+        runtime.Health.Changed += OnHealthChanged;
+
+        statusTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
         {
             Interval = TimeSpan.FromSeconds(1),
         };
 
-        statisticsTimer.Tick += (_, _) => RefreshStatistics();
-        statisticsTimer.Start();
+        statusTimer.Tick += (_, _) => RefreshStatistics();
+        statusTimer.Start();
 
+        LoadCredentials();
         RefreshDevices();
     }
 
@@ -74,7 +91,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public RelayCommand OpenLogsCommand { get; }
 
+    public RelayCommand CopyStreamUriCommand { get; }
+
+    public RelayCommand CopyOnvifUriCommand { get; }
+
+    public RelayCommand CopyPasswordCommand { get; }
+
+    public RelayCommand CreateFirewallRulesCommand { get; }
+
     public ImageSource? PreviewImage => preview.Image;
+
+    public bool IsRunning => runtime.IsRunning;
 
     public CameraDevice? SelectedDevice
     {
@@ -107,31 +134,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref selectedFrameRate, value);
     }
 
-    public CameraState State
+    public int BitrateKbps
     {
-        get => state;
-        private set
-        {
-            if (SetProperty(ref state, value))
-            {
-                OnPropertyChanged(nameof(IsRunning));
-                OnPropertyChanged(nameof(StateText));
-                RaiseCommandStates();
-            }
-        }
+        get => bitrateKbps;
+        set => SetProperty(ref bitrateKbps, value);
     }
-
-    public bool IsRunning => State == CameraState.Running;
-
-    public string StateText => State switch
-    {
-        CameraState.Running => "Running",
-        CameraState.Starting => "Starting",
-        CameraState.Stopped => "Stopped",
-        CameraState.Busy => "Unavailable",
-        CameraState.Disconnected => "Disconnected",
-        _ => "Error",
-    };
 
     public string StatusMessage
     {
@@ -139,22 +146,73 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref statusMessage, value);
     }
 
-    public string ActiveModeText
+    public string OnvifUserName => configuration.Current.Onvif.Username;
+
+    public string OnvifPassword
     {
-        get => activeModeText;
-        private set => SetProperty(ref activeModeText, value);
+        get => onvifPassword;
+        private set => SetProperty(ref onvifPassword, value);
     }
+
+    public string? StreamUri => runtime.StreamUri;
+
+    public string? OnvifUri => runtime.OnvifUri;
+
+    // --- Component status (spec 36, 63) ---
+
+    public ComponentState CameraState => StateOf(ComponentNames.Camera);
+
+    public ComponentState EncoderState => StateOf(ComponentNames.Encoder);
+
+    public ComponentState RtspState => StateOf(ComponentNames.Rtsp);
+
+    public ComponentState OnvifState => StateOf(ComponentNames.Onvif);
+
+    public ComponentState DiscoveryState => StateOf(ComponentNames.Discovery);
+
+    public string CameraDetail => DetailOf(ComponentNames.Camera);
+
+    public string EncoderDetail => DetailOf(ComponentNames.Encoder);
+
+    public string RtspDetail => DetailOf(ComponentNames.Rtsp);
+
+    public string OnvifDetail => DetailOf(ComponentNames.Onvif);
+
+    public string DiscoveryDetail => DetailOf(ComponentNames.Discovery);
+
+    public string ClientCountText => runtime.StreamManager.RtspServer.ClientCount.ToString();
 
     public string MeasuredFpsText
     {
-        get => measuredFpsText;
-        private set => SetProperty(ref measuredFpsText, value);
+        get
+        {
+            var camera = runtime.StreamManager.Camera;
+            return camera is null ? "-" : $"{camera.Statistics.MeasuredFrameRate:0.0} fps";
+        }
+    }
+
+    public string MeasuredBitrateText
+    {
+        get
+        {
+            var encoder = runtime.StreamManager.Encoder;
+            return encoder is null ? "-" : $"{encoder.Statistics.MeasuredBitrateKbps:0} kbps";
+        }
     }
 
     public string FramesText
     {
-        get => framesText;
-        private set => SetProperty(ref framesText, value);
+        get
+        {
+            var encoder = runtime.StreamManager.Encoder;
+            if (encoder is null)
+            {
+                return "-";
+            }
+
+            var statistics = encoder.Statistics;
+            return $"{statistics.FramesEncoded:N0} encoded, {statistics.FramesDropped:N0} dropped";
+        }
     }
 
     public void Dispose()
@@ -165,14 +223,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         disposed = true;
-        statisticsTimer.Stop();
+        statusTimer.Stop();
+        runtime.Health.Changed -= OnHealthChanged;
         Stop();
         preview.Dispose();
     }
 
+    /// <summary>
+    /// Loads the ONVIF password, generating one on first run.
+    /// </summary>
+    /// <remarks>
+    /// Spec 24 forbids a universal default password, so each installation gets
+    /// its own. It is shown in the window because the operator has to type it
+    /// into the VMS.
+    /// </remarks>
+    private void LoadCredentials()
+    {
+        var stored = PasswordProtector.Unprotect(configuration.Current.Onvif.ProtectedPassword);
+
+        if (stored is null)
+        {
+            stored = PasswordProtector.GeneratePassword();
+            configuration.Update(config => config with
+            {
+                Onvif = config.Onvif with { ProtectedPassword = PasswordProtector.Protect(stored) },
+            });
+
+            logger.LogInformation("Generated a new ONVIF password for this installation.");
+        }
+
+        OnvifPassword = stored;
+        BitrateKbps = configuration.Current.Encoder.BitrateKbps;
+    }
+
     private void RefreshDevices()
     {
-        var previousSelectionId = SelectedDevice?.Id ?? configuration.Current.Camera.DeviceId;
+        var previousId = SelectedDevice?.Id ?? configuration.Current.Camera.DeviceId;
 
         Devices.Clear();
         foreach (var device in cameraService.EnumerateDevices())
@@ -187,7 +273,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        SelectedDevice = Devices.FirstOrDefault(d => d.Id == previousSelectionId) ?? Devices[0];
+        SelectedDevice = Devices.FirstOrDefault(d => d.Id == previousId) ?? Devices[0];
         StatusMessage = $"{Devices.Count} camera(s) found.";
     }
 
@@ -223,8 +309,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         var preferred = configuration.Current.Camera;
 
-        // Fall back the way spec 9 asks: the configured size, then 1080p, then
-        // 720p, then whatever the camera does offer.
         SelectedResolution =
             resolutions.FirstOrDefault(r => r.Width == preferred.Width && r.Height == preferred.Height)
             ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.DefaultWidth && r.Height == CameraSettings.DefaultHeight)
@@ -273,7 +357,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var settings = new CameraSettings
+        var cameraSettings = new CameraSettings
         {
             Width = SelectedResolution?.Width ?? CameraSettings.DefaultWidth,
             Height = SelectedResolution?.Height ?? CameraSettings.DefaultHeight,
@@ -282,77 +366,39 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            State = CameraState.Starting;
             StatusMessage = $"Starting {SelectedDevice.Name}...";
+            PersistSelection(cameraSettings);
 
-            camera = cameraService.CreateSource(SelectedDevice.Id);
-            camera.StateChanged += OnCameraStateChanged;
-            camera.AddSink(preview);
-            camera.Start(settings);
+            runtime.Start(configuration.Current, SelectedDevice.Id, cameraSettings, OnvifPassword);
+            runtime.StreamManager.Camera?.AddSink(preview);
 
-            PersistSelection(settings);
-
-            State = camera.State;
-            ActiveModeText = camera.ActiveMode?.ToString() ?? "-";
-            StatusMessage = $"Streaming from {SelectedDevice.Name}.";
+            StatusMessage = runtime.OnvifUri is null
+                ? "Streaming. ONVIF did not start; check the log."
+                : "Streaming. The camera is discoverable on the network.";
         }
         catch (CameraBusyException ex)
         {
-            TearDownCamera();
-            State = CameraState.Busy;
             StatusMessage = ex.Message;
             logger.LogWarning(ex, "Camera {Camera} is unavailable.", SelectedDevice.Name);
         }
-        catch (CameraException ex)
+        catch (Exception ex)
         {
-            TearDownCamera();
-            State = CameraState.Error;
             StatusMessage = ex.Message;
-            logger.LogError(ex, "Could not start camera {Camera}.", SelectedDevice.Name);
+            logger.LogError(ex, "Could not start Screen2VMS.");
+        }
+        finally
+        {
+            RaiseAllStatus();
         }
     }
 
     private void Stop()
     {
-        if (camera is null)
-        {
-            return;
-        }
+        runtime.StreamManager.Camera?.RemoveSink(preview);
+        runtime.Stop();
 
-        TearDownCamera();
-
-        State = CameraState.Stopped;
-        ActiveModeText = "-";
-        MeasuredFpsText = "-";
-        FramesText = "-";
         StatusMessage = "Stopped.";
-    }
-
-    private void TearDownCamera()
-    {
-        if (camera is null)
-        {
-            return;
-        }
-
-        camera.StateChanged -= OnCameraStateChanged;
-        camera.RemoveSink(preview);
-        camera.Dispose();
-        camera = null;
-    }
-
-    private void OnCameraStateChanged(object? sender, CameraState newState)
-    {
-        // Raised from the capture thread, so bounce it onto the UI thread.
-        statisticsTimer.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            State = newState;
-
-            if (newState == CameraState.Disconnected)
-            {
-                StatusMessage = "Camera disconnected.";
-            }
-        }));
+        RaiseAllStatus();
     }
 
     private void PersistSelection(CameraSettings settings)
@@ -373,21 +419,91 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Height = settings.Height,
                 Fps = settings.FrameRate,
             },
+            Encoder = config.Encoder with { BitrateKbps = BitrateKbps },
         });
     }
 
+    private void OnHealthChanged(object? sender, HealthSnapshot snapshot) =>
+        dispatcher.BeginInvoke(new Action(RaiseAllStatus));
+
     private void RefreshStatistics()
     {
-        if (camera is null || !IsRunning)
+        if (!IsRunning)
         {
             return;
         }
 
-        var statistics = camera.Statistics;
-        MeasuredFpsText = $"{statistics.MeasuredFrameRate:0.0} fps";
-        FramesText = statistics.FramesDropped == 0
-            ? $"{statistics.FramesCaptured:N0} captured"
-            : $"{statistics.FramesCaptured:N0} captured, {statistics.FramesDropped:N0} dropped";
+        OnPropertyChanged(nameof(MeasuredFpsText));
+        OnPropertyChanged(nameof(MeasuredBitrateText));
+        OnPropertyChanged(nameof(FramesText));
+        OnPropertyChanged(nameof(ClientCountText));
+    }
+
+    private void RaiseAllStatus()
+    {
+        OnPropertyChanged(nameof(IsRunning));
+        OnPropertyChanged(nameof(StreamUri));
+        OnPropertyChanged(nameof(OnvifUri));
+        OnPropertyChanged(nameof(CameraState));
+        OnPropertyChanged(nameof(EncoderState));
+        OnPropertyChanged(nameof(RtspState));
+        OnPropertyChanged(nameof(OnvifState));
+        OnPropertyChanged(nameof(DiscoveryState));
+        OnPropertyChanged(nameof(CameraDetail));
+        OnPropertyChanged(nameof(EncoderDetail));
+        OnPropertyChanged(nameof(RtspDetail));
+        OnPropertyChanged(nameof(OnvifDetail));
+        OnPropertyChanged(nameof(DiscoveryDetail));
+        RefreshStatistics();
+        RaiseCommandStates();
+    }
+
+    private ComponentState StateOf(string component) =>
+        runtime.Health.Current.Components.TryGetValue(component, out var health)
+            ? health.State
+            : ComponentState.Stopped;
+
+    private string DetailOf(string component) =>
+        runtime.Health.Current.Components.TryGetValue(component, out var health)
+            ? health.Detail ?? health.State.ToString()
+            : "Stopped";
+
+    private void CopyStreamUri() => CopyToClipboard(StreamUri, "RTSP address copied.");
+
+    private void CopyOnvifUri() => CopyToClipboard(OnvifUri, "ONVIF address copied.");
+
+    private void CopyPassword() => CopyToClipboard(OnvifPassword, "Password copied.");
+
+    private void CopyToClipboard(string? text, string confirmation)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+            StatusMessage = confirmation;
+        }
+        catch (Exception ex)
+        {
+            // Another process can hold the clipboard open; not worth an error.
+            logger.LogDebug(ex, "Could not write to the clipboard.");
+        }
+    }
+
+    private void CreateFirewallRules()
+    {
+        var config = configuration.Current;
+
+        StatusMessage = FirewallRules.TryCreate(
+            config.Rtsp.Port,
+            config.Onvif.Port,
+            config.Discovery.Port,
+            logger)
+            ? "Firewall rules created."
+            : "Firewall rules were not created. Administrator approval is required.";
     }
 
     private void OpenLogs()
@@ -406,6 +522,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
         RefreshCommand.RaiseCanExecuteChanged();
+        CopyStreamUriCommand.RaiseCanExecuteChanged();
+        CopyOnvifUriCommand.RaiseCanExecuteChanged();
+        CopyPasswordCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>A resolution offered in the dropdown.</summary>

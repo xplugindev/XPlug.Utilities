@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Screen2VMS.Camera.Interop;
+namespace Screen2VMS.MediaFoundation;
 
 /// <summary>
 /// Media Foundation COM interfaces.
@@ -114,9 +114,9 @@ internal interface IMFMediaType
 
     [PreserveSig] int Reserved11GetAllocatedString();
 
-    [PreserveSig] int Reserved12GetBlobSize();
+    [PreserveSig] int GetBlobSize(ref Guid key, out uint size);
 
-    [PreserveSig] int Reserved13GetBlob();
+    [PreserveSig] int GetBlob(ref Guid key, [Out, MarshalAs(UnmanagedType.LPArray)] byte[] buffer, uint bufferSize, ref uint blobSize);
 
     [PreserveSig] int Reserved14GetAllocatedBlob();
 
@@ -138,7 +138,7 @@ internal interface IMFMediaType
 
     [PreserveSig] int Reserved23SetString();
 
-    [PreserveSig] int Reserved24SetBlob();
+    [PreserveSig] int SetBlob(ref Guid key, [In, MarshalAs(UnmanagedType.LPArray)] byte[] buffer, uint bufferSize);
 
     [PreserveSig] int Reserved25SetUnknown();
 
@@ -355,7 +355,7 @@ internal interface IMFSample
 
     [PreserveSig] int ConvertToContiguousBuffer(out IMFMediaBuffer? buffer);
 
-    [PreserveSig] int Reserved40AddBuffer();
+    [PreserveSig] int AddBuffer(IMFMediaBuffer buffer);
 
     [PreserveSig] int Reserved41RemoveBufferByIndex();
 

@@ -1,6 +1,6 @@
 using Screen2VMS.Core.Cameras;
 
-namespace Screen2VMS.Camera.Interop;
+namespace Screen2VMS.MediaFoundation;
 
 /// <summary>
 /// GUIDs and magic numbers from the Media Foundation headers.
