@@ -5,7 +5,13 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>screen2vms.ico</ApplicationIcon>
     <AssemblyName>Screen2VMS</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Executable metadata, shown in the file's properties">
+    <AssemblyTitle>Screen2VMS</AssemblyTitle>
+    <Description>Turns a Windows webcam into an ONVIF IP camera for Genetec and Milestone XProtect.</Description>
   </PropertyGroup>
 
   <ItemGroup>

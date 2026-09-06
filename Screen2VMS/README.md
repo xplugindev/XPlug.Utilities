@@ -42,8 +42,9 @@ Management Client. That needs the VMS software.
 ## Requirements
 
 - Windows 10 or 11, 64-bit
-- .NET 8 desktop runtime (or the .NET SDK to build)
 - A webcam
+- The .NET 8 SDK, only if you are building from source. The published
+  executable carries its own runtime and needs nothing installed.
 
 No administrator rights for normal operation, no internet connection, no cloud
 account, no licence server and no database. Optionally one UAC prompt if you use
@@ -81,15 +82,37 @@ If the requested capture mode is unavailable the closest supported one is used
 rather than failing — asking for 1920x1080 at 30 fps on a camera that tops out
 at 1280x720 gets you 1280x720, not an error.
 
+## Building a standalone executable
+
+```powershell
+.\tools\Publish.ps1
+```
+
+Produces `dist\Screen2VMS.exe`: one self-contained file of about 79 MB with the
+.NET runtime, every dependency and the native WPF libraries bundled inside it.
+Copy it anywhere and double-click. There is no installer, nothing to install
+beside it, and no .NET runtime needed on the machine. It still keeps its
+settings and logs in `%ProgramData%\Screen2VMS\`.
+
+Pass `-Compress $false` for a larger file that starts a little faster.
+
+Two things about that script are deliberate:
+
+- The publish switches live in the script rather than the `.csproj`. Setting a
+  runtime identifier in the project would move every ordinary build into a
+  `win-x64` subfolder and break the paths the tests and dev loop already use.
+- Trimming is off. CoreWCF, the XML serialisers and WPF all resolve types by
+  reflection, and a trimmed build fails at runtime rather than at publish time.
+
 Run the tests with:
 
 ```bash
 dotnet test tests/Screen2VMS.Tests
 ```
 
-69 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
-ONVIF discovery scopes, credential protection and configuration round-tripping.
-None of them need a camera.
+73 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
+ONVIF discovery scopes, credential protection, configuration round-tripping and
+the ONVIF host's start/stop lifecycle. None of them need a camera.
 
 ---
 
