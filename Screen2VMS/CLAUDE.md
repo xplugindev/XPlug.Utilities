@@ -337,3 +337,24 @@ not the TCP interleaving spec 14 nominates as primary. Both work — ffmpeg pull
 the same stream over either transport — so the server accepts what it is asked
 for. Worth remembering when reading a capture: seeing UDP negotiated is normal,
 not a fault.
+
+---
+
+## Never block the UI thread on the ONVIF host
+
+`OnvifServiceHost.Start` and `Stop` are synchronous because a button click
+calls them, and that click runs on the WPF dispatcher thread. Awaiting the
+ASP.NET host from there and blocking on the result deadlocks: Kestrel's
+continuations are posted back to the dispatcher, which is the thread sitting
+blocked waiting for them. The window stopped responding, the RTSP port stayed
+bound and the camera was never released — which reads as a crash.
+
+`RunDetached` hands each host call to the thread pool so the continuations have
+somewhere to run. Do not "simplify" it back to `.GetAwaiter().GetResult()`.
+
+The trap is that each call also has a timeout backstop, so a deadlocked build
+does not hang forever — it sits out the timeout and then **reports success**.
+That is why `OnvifServiceHostLifecycleTests` asserts on elapsed time rather than
+on completion: healthy start and stop take about 150 ms, a blocked stop burns
+its full fifteen seconds. Those tests were confirmed to fail with the deadlock
+reintroduced and pass once it was removed.

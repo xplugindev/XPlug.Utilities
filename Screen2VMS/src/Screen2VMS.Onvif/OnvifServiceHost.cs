@@ -34,6 +34,15 @@ namespace Screen2VMS.Onvif;
 /// </remarks>
 public sealed class OnvifServiceHost : IOnvifServiceHost
 {
+    /// <summary>How long to wait for Kestrel and the discovery service to bind.</summary>
+    private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Backstop for shutdown, so a wedged host cannot hang the caller.</summary>
+    private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>Grace period given to in-flight requests before the host is torn down.</summary>
+    private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(5);
+
     private readonly IOnvifDeviceContext context;
     private readonly OnvifHostOptions options;
     private readonly ILoggerFactory loggerFactory;
@@ -79,7 +88,7 @@ public sealed class OnvifServiceHost : IOnvifServiceHost
         try
         {
             application = BuildApplication(port);
-            application.StartAsync().GetAwaiter().GetResult();
+            RunDetached(() => application.StartAsync(), "start", StartTimeout);
 
             IsRunning = true;
             DeviceServiceUri = $"http://{options.FallbackAddress}:{port}{OnvifHostOptions.DeviceServicePath}";
@@ -290,17 +299,51 @@ public sealed class OnvifServiceHost : IOnvifServiceHost
             return;
         }
 
+        var host = application;
+        application = null;
+
         try
         {
-            application.StopAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
-            application.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            RunDetached(() => host.StopAsync(ShutdownGrace), "stop", StopTimeout);
+            RunDetached(() => host.DisposeAsync().AsTask(), "dispose", StopTimeout);
         }
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Ignoring an error while shutting the ONVIF host down.");
         }
+    }
 
-        application = null;
+    /// <summary>
+    /// Runs an asynchronous host operation to completion from a synchronous
+    /// caller, without letting it capture the caller's synchronisation context.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Start and Stop are synchronous because the user interface calls them
+    /// from a button click, and that click runs on the WPF dispatcher thread.
+    /// Awaiting the host directly there and blocking on the result deadlocks:
+    /// the host's continuations are posted back to the dispatcher, which is
+    /// the very thread sitting blocked waiting for them. The application stops
+    /// answering and looks like a crash.
+    /// </para>
+    /// <para>
+    /// Handing the work to the thread pool detaches it from the dispatcher, so
+    /// the continuations have somewhere to run. The timeout is a backstop: a
+    /// host that will not shut down must not strand the caller forever.
+    /// </para>
+    /// </remarks>
+    private void RunDetached(Func<Task> operation, string description, TimeSpan timeout)
+    {
+        var task = Task.Run(operation);
+
+        if (!task.Wait(timeout))
+        {
+            logger.LogWarning("The ONVIF host did not {Description} within {Timeout}.", description, timeout);
+            return;
+        }
+
+        // Surfaces a genuine failure; Wait already returned so this cannot block.
+        task.GetAwaiter().GetResult();
     }
 }
 

@@ -254,6 +254,11 @@ public sealed class StreamManager : IStreamManager
 
     private void StopCore()
     {
+        // Stop is reached from the button, from Dispose and from application
+        // exit, so it has to be idempotent - and silent when there was nothing
+        // left to stop, or the log fills with StreamStopped on every close.
+        var stoppedAnything = encoder is not null || camera is not null || rtspServer.IsRunning;
+
         if (encoder is not null)
         {
             camera?.RemoveSink(encoder);
@@ -277,7 +282,10 @@ public sealed class StreamManager : IStreamManager
             health.Report(ComponentNames.Rtsp, ComponentState.Stopped);
         }
 
-        logger.LogInformation("StreamStopped");
+        if (stoppedAnything)
+        {
+            logger.LogInformation("StreamStopped");
+        }
     }
 
     private void OnFrameEncoded(object? sender, EncodedFrame frame)

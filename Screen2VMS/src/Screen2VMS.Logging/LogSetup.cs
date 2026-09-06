@@ -26,6 +26,7 @@ public static class LogSetup
         var configuration = new LoggerConfiguration()
             .MinimumLevel.Is(minimumLevel)
             .Enrich.FromLogContext()
+            .Filter.ByExcluding(IsExpectedShutdownNoise)
             .WriteTo.File(
                 Path.Combine(AppPaths.LogDirectory, "screen2vms-.log"),
                 rollingInterval: RollingInterval.Day,
@@ -54,6 +55,21 @@ public static class LogSetup
 
     /// <summary>Flushes buffered log events. Call before the process exits.</summary>
     public static void Shutdown() => Log.CloseAndFlush();
+
+    /// <summary>
+    /// Drops the error the RTSP library logs when its listener is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// Stopping the RTSP server cancels the accept loop, and SharpRTSP reports
+    /// that as "Got an error listening" at Error level on every clean stop.
+    /// Leaving it in means every normal shutdown looks like a fault, which
+    /// sends whoever reads the log next chasing a problem that is not there.
+    /// The match is deliberately narrow - only a cancellation, only from that
+    /// message - so a real listener failure still gets through.
+    /// </remarks>
+    private static bool IsExpectedShutdownNoise(LogEvent logEvent) =>
+        logEvent.Exception is OperationCanceledException
+        && logEvent.MessageTemplate.Text.Contains("error listening", StringComparison.OrdinalIgnoreCase);
 
     private static LogEventLevel ParseLevel(string level) => level?.Trim().ToLowerInvariant() switch
     {
