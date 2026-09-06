@@ -59,3 +59,6 @@ nunit-*.xml
 
 # Visual Studio workspace state, in any project folder
 .vs/
+
+# Published single-file builds
+dist/

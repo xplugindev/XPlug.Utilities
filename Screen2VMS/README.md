@@ -16,6 +16,35 @@ Acceptance against Genetec and XProtect themselves is still outstanding.**
 
 ---
 
+## Scope: personal utility, not a product
+
+This is a **personal / internal tool**, built for one person's own projects on an
+explicit "internal use only" basis. It sits in the shared `XPlug.Utilities`
+repository next to `DesktopSessionManager`, which makes it easy to mistake for
+team-owned production code. It is not.
+
+It has not been through security review, ONVIF conformance testing, or any
+release process. Several design decisions were taken *because* it is internal,
+and each of them is wrong for a product:
+
+| Decision | Why it is fine here | Why it would not be elsewhere |
+|---|---|---|
+| No TLS anywhere — ONVIF, snapshots and RTSP are plaintext | Trusted LAN only | Credentials and video cross the wire in the clear |
+| Credential stored with DPAPI, machine scope | Keeps it out of a config file that gets copied around | Anyone who can run code on the box can recover it |
+| Licensing decided on "internal only" | GPL tooling (ffmpeg, VLC) is used for debugging only and ships with nothing; H.264 royalties rest on the Windows Media Foundation encoder licence | Both need a real review before distribution |
+| ONVIF-compatible, not ONVIF-certified | Works with the clients it was tested against | Has never seen the ONVIF Device Test Tool; Profile S is deprecated for new conformance submissions after 31 March 2027 |
+| No installer, no code signing, no auto-update | Copy the .exe and run it | SmartScreen will flag it; there is no update path |
+
+Known gaps, in case they matter to you: **Milestone XProtect has never been
+tested** (Genetec 5.14 is verified), the process settles around 354 MB against
+the spec's 250 MB target, and the 24-hour soak has only ever been run for 16
+minutes.
+
+If this ever changes hands or purpose, treat that table as a blocking checklist
+rather than a footnote.
+
+---
+
 ## What works
 
 | | |
@@ -42,8 +71,9 @@ Management Client. That needs the VMS software.
 ## Requirements
 
 - Windows 10 or 11, 64-bit
-- .NET 8 desktop runtime (or the .NET SDK to build)
 - A webcam
+- The .NET 8 SDK, only if you are building from source. The published
+  executable carries its own runtime and needs nothing installed.
 
 No administrator rights for normal operation, no internet connection, no cloud
 account, no licence server and no database. Optionally one UAC prompt if you use
@@ -81,15 +111,37 @@ If the requested capture mode is unavailable the closest supported one is used
 rather than failing — asking for 1920x1080 at 30 fps on a camera that tops out
 at 1280x720 gets you 1280x720, not an error.
 
+## Building a standalone executable
+
+```powershell
+.\tools\Publish.ps1
+```
+
+Produces `dist\Screen2VMS.exe`: one self-contained file of about 79 MB with the
+.NET runtime, every dependency and the native WPF libraries bundled inside it.
+Copy it anywhere and double-click. There is no installer, nothing to install
+beside it, and no .NET runtime needed on the machine. It still keeps its
+settings and logs in `%ProgramData%\Screen2VMS\`.
+
+Pass `-Compress $false` for a larger file that starts a little faster.
+
+Two things about that script are deliberate:
+
+- The publish switches live in the script rather than the `.csproj`. Setting a
+  runtime identifier in the project would move every ordinary build into a
+  `win-x64` subfolder and break the paths the tests and dev loop already use.
+- Trimming is off. CoreWCF, the XML serialisers and WPF all resolve types by
+  reflection, and a trimmed build fails at runtime rather than at publish time.
+
 Run the tests with:
 
 ```bash
 dotnet test tests/Screen2VMS.Tests
 ```
 
-69 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
-ONVIF discovery scopes, credential protection and configuration round-tripping.
-None of them need a camera.
+73 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
+ONVIF discovery scopes, credential protection, configuration round-tripping and
+the ONVIF host's start/stop lifecycle. None of them need a camera.
 
 ---
 
