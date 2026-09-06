@@ -1,5 +1,11 @@
 # Screen2VMS — working notes
 
+> **Scope:** this is a personal / internal utility, not a product. It has had no
+> security review, no ONVIF conformance testing and no release process, and
+> several decisions here were taken on the basis that it stays internal. The
+> table in `README.md` under "Scope: personal utility, not a product" lists them
+> and is the checklist to work through if that ever changes.
+
 Turns a Windows webcam into an ONVIF Profile-S IP camera so Genetec Security
 Center and Milestone XProtect can discover it, stream it and record it over
 standard ONVIF + RTSP, with no VMS plugin.

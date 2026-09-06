@@ -16,6 +16,35 @@ Acceptance against Genetec and XProtect themselves is still outstanding.**
 
 ---
 
+## Scope: personal utility, not a product
+
+This is a **personal / internal tool**, built for one person's own projects on an
+explicit "internal use only" basis. It sits in the shared `XPlug.Utilities`
+repository next to `DesktopSessionManager`, which makes it easy to mistake for
+team-owned production code. It is not.
+
+It has not been through security review, ONVIF conformance testing, or any
+release process. Several design decisions were taken *because* it is internal,
+and each of them is wrong for a product:
+
+| Decision | Why it is fine here | Why it would not be elsewhere |
+|---|---|---|
+| No TLS anywhere — ONVIF, snapshots and RTSP are plaintext | Trusted LAN only | Credentials and video cross the wire in the clear |
+| Credential stored with DPAPI, machine scope | Keeps it out of a config file that gets copied around | Anyone who can run code on the box can recover it |
+| Licensing decided on "internal only" | GPL tooling (ffmpeg, VLC) is used for debugging only and ships with nothing; H.264 royalties rest on the Windows Media Foundation encoder licence | Both need a real review before distribution |
+| ONVIF-compatible, not ONVIF-certified | Works with the clients it was tested against | Has never seen the ONVIF Device Test Tool; Profile S is deprecated for new conformance submissions after 31 March 2027 |
+| No installer, no code signing, no auto-update | Copy the .exe and run it | SmartScreen will flag it; there is no update path |
+
+Known gaps, in case they matter to you: **Milestone XProtect has never been
+tested** (Genetec 5.14 is verified), the process settles around 354 MB against
+the spec's 250 MB target, and the 24-hour soak has only ever been run for 16
+minutes.
+
+If this ever changes hands or purpose, treat that table as a blocking checklist
+rather than a footnote.
+
+---
+
 ## What works
 
 | | |
