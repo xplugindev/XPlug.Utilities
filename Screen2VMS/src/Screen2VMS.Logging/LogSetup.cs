@@ -60,16 +60,39 @@ public static class LogSetup
     /// Drops the error the RTSP library logs when its listener is cancelled.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Stopping the RTSP server cancels the accept loop, and SharpRTSP reports
     /// that as "Got an error listening" at Error level on every clean stop.
     /// Leaving it in means every normal shutdown looks like a fault, which
     /// sends whoever reads the log next chasing a problem that is not there.
-    /// The match is deliberately narrow - only a cancellation, only from that
-    /// message - so a real listener failure still gets through.
+    /// </para>
+    /// <para>
+    /// The library formats the exception into the message rather than passing
+    /// it to the logger, so matching on <see cref="LogEvent.Exception"/> alone
+    /// misses them. The message is only rendered once the template has already
+    /// matched, and the cancellation signatures are checked explicitly - a real
+    /// listener failure, such as the port being taken, still gets through.
+    /// </para>
     /// </remarks>
-    private static bool IsExpectedShutdownNoise(LogEvent logEvent) =>
-        logEvent.Exception is OperationCanceledException
-        && logEvent.MessageTemplate.Text.Contains("error listening", StringComparison.OrdinalIgnoreCase);
+    private static bool IsExpectedShutdownNoise(LogEvent logEvent)
+    {
+        if (!logEvent.MessageTemplate.Text.Contains("error listening", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (logEvent.Exception is OperationCanceledException)
+        {
+            return true;
+        }
+
+        var detail = logEvent.RenderMessage();
+
+        // 995 is ERROR_OPERATION_ABORTED, which is what the pending accept
+        // fails with once the socket is closed.
+        return detail.Contains(nameof(OperationCanceledException), StringComparison.Ordinal)
+            || detail.Contains("(995)", StringComparison.Ordinal);
+    }
 
     private static LogEventLevel ParseLevel(string level) => level?.Trim().ToLowerInvariant() switch
     {

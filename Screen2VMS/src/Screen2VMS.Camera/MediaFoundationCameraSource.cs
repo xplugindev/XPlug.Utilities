@@ -277,19 +277,28 @@ internal sealed class MediaFoundationCameraSource : ICameraSource
         }
     }
 
-    /// <summary>Activates the media source for one specific symbolic link.</summary>
+    /// <summary>
+    /// Activates the media source for one specific device.
+    /// </summary>
+    /// <remarks>
+    /// The device is found by comparing symbolic links, not by taking the first
+    /// result. MFEnumDeviceSources only filters on the source-type attribute:
+    /// it ignores MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+    /// which only MFCreateDeviceSource honours. Setting that attribute and
+    /// taking element zero therefore opens whichever camera Windows happens to
+    /// enumerate first, no matter which one was asked for. With a single camera
+    /// that is invisible; with two, every selection silently opens the wrong
+    /// one.
+    /// </remarks>
     private static IMFMediaSource OpenDevice(string symbolicLink)
     {
-        MfNative.ThrowIfFailed(MfNative.MFCreateAttributes(out var attributes, 2), "MFCreateAttributes");
+        MfNative.ThrowIfFailed(MfNative.MFCreateAttributes(out var attributes, 1), "MFCreateAttributes");
 
         try
         {
             var sourceTypeKey = MfConstants.DevSourceAttributeSourceType;
             var vidcap = MfConstants.DevSourceAttributeSourceTypeVidCap;
             MfNative.ThrowIfFailed(attributes.SetGUID(ref sourceTypeKey, ref vidcap), "SetGUID(SourceType)");
-
-            var linkKey = MfConstants.DevSourceAttributeVidCapSymbolicLink;
-            MfNative.ThrowIfFailed(attributes.SetString(ref linkKey, symbolicLink), "SetString(SymbolicLink)");
 
             MfNative.ThrowIfFailed(
                 MfNative.MFEnumDeviceSources(attributes, out var activateArray, out var count),
@@ -299,27 +308,46 @@ internal sealed class MediaFoundationCameraSource : ICameraSource
             {
                 if (count == 0 || activateArray == IntPtr.Zero)
                 {
-                    throw new CameraException("The camera is no longer connected.");
+                    throw new CameraException("No camera is connected.");
                 }
 
-                var slot = Marshal.ReadIntPtr(activateArray);
-                var activate = (IMFActivate)Marshal.GetObjectForIUnknown(slot);
-                Marshal.Release(slot);
-
-                try
+                for (var i = 0; i < count; i++)
                 {
-                    var riid = typeof(IMFMediaSource).GUID;
-                    var hr = activate.ActivateObject(ref riid, out var sourcePtr);
-                    MfNative.ThrowIfFailed(hr, "IMFActivate::ActivateObject");
+                    var slot = Marshal.ReadIntPtr(activateArray, i * IntPtr.Size);
+                    if (slot == IntPtr.Zero)
+                    {
+                        continue;
+                    }
 
-                    var source = (IMFMediaSource)Marshal.GetObjectForIUnknown(sourcePtr);
-                    Marshal.Release(sourcePtr);
-                    return source;
+                    var activate = (IMFActivate)Marshal.GetObjectForIUnknown(slot);
+                    Marshal.Release(slot);
+
+                    try
+                    {
+                        var link = MfNative.GetStringAttribute(
+                            activate,
+                            MfConstants.DevSourceAttributeVidCapSymbolicLink);
+
+                        if (!string.Equals(link, symbolicLink, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var riid = typeof(IMFMediaSource).GUID;
+                        var hr = activate.ActivateObject(ref riid, out var sourcePtr);
+                        MfNative.ThrowIfFailed(hr, "IMFActivate::ActivateObject");
+
+                        var source = (IMFMediaSource)Marshal.GetObjectForIUnknown(sourcePtr);
+                        Marshal.Release(sourcePtr);
+                        return source;
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(activate);
+                    }
                 }
-                finally
-                {
-                    Marshal.ReleaseComObject(activate);
-                }
+
+                throw new CameraException("The camera is no longer connected.");
             }
             finally
             {

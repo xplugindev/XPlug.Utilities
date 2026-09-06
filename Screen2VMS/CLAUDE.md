@@ -358,3 +358,39 @@ That is why `OnvifServiceHostLifecycleTests` asserts on elapsed time rather than
 on completion: healthy start and stop take about 150 ms, a blocked stop burns
 its full fifteen seconds. Those tests were confirmed to fail with the deadlock
 reintroduced and pass once it was removed.
+
+---
+
+## Opening a specific camera
+
+`MFEnumDeviceSources` filters **only** on the source-type attribute. It ignores
+`MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK`, which is honoured by
+`MFCreateDeviceSource` instead. Setting that attribute and then taking element
+zero of the result therefore opens whichever camera Windows enumerates first,
+regardless of which one was asked for.
+
+`MediaFoundationCameraSource.OpenDevice` matches on the symbolic link itself for
+that reason. Do not "simplify" it back to taking the first result.
+
+This is invisible on a machine with one camera, which is why it survived until a
+second one was plugged in: every selection silently streamed the built-in
+webcam. The cheapest way to catch it again is to ask for a resolution only one
+of the cameras has — a Logitech C270 does 1280x960 and a typical built-in
+camera cannot — and check what `GetStreamUri`'s stream actually reports:
+
+```powershell
+ffprobe -rtsp_transport tcp -i rtsp://admin:<password>@<ip>:8554/live
+```
+
+## Rebuilding a bound list resets its selection
+
+`ObservableObject.SetProperty` suppresses the change notification when the value
+is unchanged, which is normally what you want. It is wrong immediately after an
+`ItemsSource` has been rebuilt: clearing a combo box's items resets its
+selection, so if the new camera offers the same resolution or frame rate as the
+old one — 30 fps is near universal — no notification fires and the box sits
+blank while the view model still holds a perfectly good value.
+
+`RebuildModeLists` and `RebuildFrameRates` therefore assign the backing field
+directly and raise the notification unconditionally, guarded by `rebuilding` so
+the transient nulls the combo boxes push back during the rebuild are ignored.

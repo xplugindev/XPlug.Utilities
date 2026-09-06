@@ -36,6 +36,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int bitrateKbps = 4000;
     private string statusMessage = "Select a camera and press Start.";
     private string onvifPassword = string.Empty;
+    private bool rebuilding;
     private bool disposed;
 
     public MainViewModel(
@@ -121,7 +122,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => selectedResolution;
         set
         {
-            if (SetProperty(ref selectedResolution, value))
+            // While the lists are being rebuilt the combo boxes push their own
+            // transient nulls back here as their items are replaced. Acting on
+            // those would clear the frame rates that are about to be filled in.
+            if (SetProperty(ref selectedResolution, value) && !rebuilding)
             {
                 RebuildFrameRates();
             }
@@ -277,77 +281,119 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StatusMessage = $"{Devices.Count} camera(s) found.";
     }
 
+    /// <summary>
+    /// Repopulates the resolution list for the selected camera and picks one.
+    /// </summary>
+    /// <remarks>
+    /// The chosen value is announced unconditionally, even when it happens to
+    /// equal what was already there. Clearing a combo box's items resets its
+    /// selection, so if the new camera offers the same resolution as the old
+    /// one, a change-only notification would never fire and the box would sit
+    /// blank with the view model still holding a value.
+    /// </remarks>
     private void RebuildModeLists()
     {
-        Resolutions.Clear();
+        rebuilding = true;
 
-        if (SelectedDevice is null)
+        try
         {
-            SelectedResolution = null;
-            return;
-        }
+            Resolutions.Clear();
 
-        if (SelectedDevice.Modes.Count == 0)
+            if (SelectedDevice is null)
+            {
+                selectedResolution = null;
+                return;
+            }
+
+            if (SelectedDevice.Modes.Count == 0)
+            {
+                StatusMessage =
+                    $"'{SelectedDevice.Name}' could not be opened to read its modes. " +
+                    "It may be in use by another application.";
+                selectedResolution = null;
+                return;
+            }
+
+            var resolutions = SelectedDevice.Modes
+                .Select(m => new Resolution(m.Width, m.Height))
+                .Distinct()
+                .OrderByDescending(r => r.PixelCount)
+                .ToList();
+
+            foreach (var resolution in resolutions)
+            {
+                Resolutions.Add(resolution);
+            }
+
+            var preferred = configuration.Current.Camera;
+
+            selectedResolution =
+                resolutions.FirstOrDefault(r => r.Width == preferred.Width && r.Height == preferred.Height)
+                ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.DefaultWidth && r.Height == CameraSettings.DefaultHeight)
+                ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.FallbackWidth && r.Height == CameraSettings.FallbackHeight)
+                ?? resolutions[0];
+        }
+        finally
         {
-            StatusMessage =
-                $"'{SelectedDevice.Name}' could not be opened to read its modes. " +
-                "It may be in use by another application.";
-            SelectedResolution = null;
-            return;
+            rebuilding = false;
+            OnPropertyChanged(nameof(SelectedResolution));
+            RebuildFrameRates();
         }
-
-        var resolutions = SelectedDevice.Modes
-            .Select(m => new Resolution(m.Width, m.Height))
-            .Distinct()
-            .OrderByDescending(r => r.PixelCount)
-            .ToList();
-
-        foreach (var resolution in resolutions)
-        {
-            Resolutions.Add(resolution);
-        }
-
-        var preferred = configuration.Current.Camera;
-
-        SelectedResolution =
-            resolutions.FirstOrDefault(r => r.Width == preferred.Width && r.Height == preferred.Height)
-            ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.DefaultWidth && r.Height == CameraSettings.DefaultHeight)
-            ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.FallbackWidth && r.Height == CameraSettings.FallbackHeight)
-            ?? resolutions[0];
     }
 
+    /// <summary>
+    /// Repopulates the frame rates offered for the selected resolution.
+    /// </summary>
+    /// <remarks>
+    /// Like the resolution list, the chosen rate is announced unconditionally.
+    /// Two cameras commonly share a rate - 30 fps is near universal - so a
+    /// change-only notification leaves the box blank after switching between
+    /// them.
+    /// </remarks>
     private void RebuildFrameRates()
     {
-        FrameRates.Clear();
+        rebuilding = true;
 
-        if (SelectedDevice is null || SelectedResolution is null)
+        try
         {
-            return;
+            FrameRates.Clear();
+
+            if (SelectedDevice is null || SelectedResolution is null)
+            {
+                return;
+            }
+
+            var rates = SelectedDevice.Modes
+                .Where(m => m.Width == SelectedResolution.Width && m.Height == SelectedResolution.Height)
+                .SelectMany(m => new[] { m.MinFrameRate, m.MaxFrameRate })
+                .Where(r => r > 0)
+                .Select(r => Math.Round(r, 2))
+                .Distinct()
+                .OrderByDescending(r => r)
+                .ToList();
+
+            if (rates.Count == 0)
+            {
+                // A camera that advertises no frame rate still has to be
+                // usable; the driver picks whatever it runs at.
+                rates.Add(CameraSettings.DefaultFrameRate);
+            }
+
+            foreach (var rate in rates)
+            {
+                FrameRates.Add(rate);
+            }
+
+            var configured = configuration.Current.Camera.Fps;
+            selectedFrameRate = rates.Contains(configured)
+                ? configured
+                : rates.FirstOrDefault(r => Math.Abs(r - CameraSettings.DefaultFrameRate) < 0.01, rates[0]);
         }
-
-        var rates = SelectedDevice.Modes
-            .Where(m => m.Width == SelectedResolution.Width && m.Height == SelectedResolution.Height)
-            .SelectMany(m => new[] { m.MinFrameRate, m.MaxFrameRate })
-            .Where(r => r > 0)
-            .Select(r => Math.Round(r, 2))
-            .Distinct()
-            .OrderByDescending(r => r)
-            .ToList();
-
-        if (rates.Count == 0)
+        finally
         {
-            rates.Add(CameraSettings.DefaultFrameRate);
+            rebuilding = false;
+            OnPropertyChanged(nameof(SelectedFrameRate));
         }
-
-        foreach (var rate in rates)
-        {
-            FrameRates.Add(rate);
-        }
-
-        var configured = configuration.Current.Camera.Fps;
-        SelectedFrameRate = rates.Contains(configured)
-            ? configured
-            : rates.FirstOrDefault(r => Math.Abs(r - CameraSettings.DefaultFrameRate) < 0.01, rates[0]);
     }
 
     private void Start()
