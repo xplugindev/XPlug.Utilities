@@ -11,6 +11,10 @@ Screen2VMS presents itself on the LAN as an ONVIF Profile-S compatible video
 transmitter. A VMS finds it by WS-Discovery, reads its media profile over ONVIF,
 and pulls H.264 over RTSP exactly as it would from a physical IP camera.
 
+Several cameras can run at once. Each one is published as its own independent
+ONVIF device with its own ports, serial number and password, so a VMS adds them
+as separate units.
+
 **Version 0.1 — the streaming device is complete and independently verified.
 Acceptance against Genetec and XProtect themselves is still outstanding.**
 
@@ -57,7 +61,8 @@ product:
 | No installer, no code signing, no auto-update | Copy the .exe and run it | SmartScreen will flag it; there is no update path |
 
 Known gaps, in case they matter to you: **Milestone XProtect has never been
-tested** (Genetec 5.14 is verified), the process settles around 354 MB against
+tested** (Genetec 5.14 is verified, with a single camera), **running several
+cameras has never been tried against either VMS**, the single-camera process settles around 354 MB against
 the spec's 250 MB target, and the 24-hour soak has only ever been run for 16
 minutes.
 
@@ -71,8 +76,9 @@ rather than a footnote.
 | | |
 |---|---|
 | Camera capture | Media Foundation, NV12, closest-supported-mode negotiation |
+| Multiple cameras | A live grid of every added camera, each an independent ONVIF device and RTSP stream |
 | Encoding | H.264 Main profile, CBR, 1-second GOP, no B-frames |
-| Streaming | RTSP over TCP, multiple simultaneous clients from one encode |
+| Streaming | RTSP over TCP or UDP, multiple simultaneous clients from one encode |
 | Discovery | ONVIF WS-Discovery on UDP 3702 with Profile-S scopes |
 | ONVIF | Device and media services, 28 operations, snapshots |
 | Security | WS-Security UsernameToken and HTTP Digest, per-install password |
@@ -84,8 +90,12 @@ VLC plays the RTSP stream over the LAN address, three concurrent clients receive
 byte-identical output, and an ONVIF probe drives 28 operations including
 negative authentication tests.
 
-Not yet done: adding the unit inside Genetec Config Tool or the XProtect
-Management Client. That needs the VMS software.
+Genetec Security Center 5.14 discovers, adds and displays a single camera.
+Not yet done: adding the unit in the XProtect Management Client, and adding
+more than one camera to either VMS at the same time. Running two cameras'
+ONVIF hosts side by side in one process, including WS-Discovery on the same
+UDP port, is covered by an automated test; what a VMS makes of two
+simultaneous Screen2VMS devices is not.
 
 ---
 
@@ -110,12 +120,20 @@ dotnet build
 dotnet run --project src/Screen2VMS.App
 ```
 
-Pick a camera, resolution, frame rate and bitrate, then press **Start**. The
-window then shows everything needed to add the camera to a VMS:
+Pick a webcam under **Add a camera** and press **Add camera**. It appears as a
+tile in the grid on the right with its own live preview. Choose its resolution
+and frame rate on the tile, then press **Start** on the tile, or **Start All**
+to start every added camera. A webcam that is already added no longer appears
+in the list, and cameras are never started automatically when the app opens.
 
-- the ONVIF address, e.g. `http://192.168.1.50:8000/onvif/device_service`
-- the RTSP address, e.g. `rtsp://192.168.1.50:8554/live`
-- the user name and the password generated for this installation
+Each running tile shows everything needed to add that camera to a VMS:
+
+- its ONVIF address, e.g. `http://192.168.1.50:8000/onvif/device_service`
+- its RTSP address, e.g. `rtsp://192.168.1.50:8554/live`
+- the user name and the password generated for that camera
+
+Every camera has its own password and its own pair of ports, so copy the
+details from the tile you are adding, not from another one.
 
 The RTSP stream requires those same credentials, which is what a real IP camera
 does and what stops anyone on the LAN from watching. A VMS handles this by
@@ -125,8 +143,17 @@ itself. To open the stream by hand, put them in the URL:
 vlc rtsp://admin:<password>@192.168.1.50:8554/live
 ```
 
-Set `rtsp.requireAuthentication` to `false` in `config.json` if you need an
-anonymous stream to diagnose a client that cannot authenticate.
+Set a camera's `rtsp.requireAuthentication` to `false` in `config.json` (under
+its entry in `cameras`) if you need an anonymous stream to diagnose a client
+that cannot authenticate.
+
+The bitrate is no longer set in the window. It is one setting shared by every
+camera, `encoder.bitrateKbps` in `config.json` (default 4000), read when a
+camera starts.
+
+Removing a camera (**Remove** on a stopped tile) deletes its identity. Adding
+the same webcam again creates a new serial number, MAC and password, and a VMS
+treats it as a new device.
 
 If the requested capture mode is unavailable the closest supported one is used
 rather than failing — asking for 1920x1080 at 30 fps on a camera that tops out
@@ -160,9 +187,11 @@ Run the tests with:
 dotnet test tests/Screen2VMS.Tests
 ```
 
-73 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
+86 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
 ONVIF discovery scopes, credential protection, configuration round-tripping and
-the ONVIF host's start/stop lifecycle. None of them need a camera.
+migration, per-camera port allocation, the multi-camera runtime manager, the
+ONVIF host's start/stop lifecycle, and two ONVIF hosts running side by side.
+None of them need a camera.
 
 ---
 
@@ -171,16 +200,25 @@ the ONVIF host's start/stop lifecycle. None of them need a camera.
 1. Put the machine on the same subnet as the VMS server. WS-Discovery is
    multicast and does not cross subnets; from another VLAN, add the device by IP
    instead.
-2. Press **Firewall Rules** once if inbound traffic is blocked. This is the only
-   action that asks for administrator rights.
-3. In the VMS, add an ONVIF device and run discovery. "Screen2VMS Virtual
-   Camera" should appear.
-4. Authenticate with the user name and password from the window.
+2. Press **Firewall Rules** if inbound traffic is blocked. This is the only
+   action that asks for administrator rights. It opens the ports of every camera
+   added *so far*, so press it again after adding another camera.
+3. Start the cameras you want to add.
+4. In the VMS, add an ONVIF device and run discovery. Each running camera
+   appears as its own "Screen2VMS Virtual Camera". They all carry that same
+   name, so tell them apart by port: match the ONVIF address shown on each tile.
+5. Authenticate with the user name and password from that camera's tile.
 
 **Genetec Security Center** — Config Tool → add video unit → ONVIF → discover.
 
 **Milestone XProtect** — Management Client → Add Hardware → ONVIF driver →
 discover.
+
+Firewall rules are named per camera, e.g. `Screen2VMS RTSP (Integrated Camera)`.
+Two cleanups are left to you in *Windows Defender Firewall → Inbound Rules*:
+removing a camera does not delete its rules, and the older single-camera rules
+(`Screen2VMS RTSP` and `Screen2VMS ONVIF`, without a camera name) are not
+replaced by the new ones.
 
 ---
 
@@ -191,10 +229,16 @@ discover.
 %ProgramData%\Screen2VMS\Logs\          daily rolling logs
 ```
 
-`config.json` holds a serial number, a synthetic MAC address and an encrypted
-password, all generated on first run. A VMS uses the serial and MAC to recognise
-the camera, so they never change once written. Deleting the file resets them and
-any VMS that had already added the unit will see a different camera.
+`config.json` holds one entry per added camera under `cameras`. Each entry has
+its own serial number, synthetic MAC address, encrypted password and ports,
+generated when the camera is added. A VMS uses the serial and MAC to recognise
+the camera, so they never change once written. Deleting the file resets every
+camera, and any VMS that had already added them will see different cameras.
+
+A `config.json` from a single-camera version is migrated on first start: its
+identity, password and ports become the first entry under `cameras`, so a camera
+a VMS already knows stays the same camera. The old top-level `device`, `camera`,
+`rtsp` and `onvif` sections stay in the file after that but are no longer read.
 
 ---
 
@@ -202,9 +246,14 @@ any VMS that had already added the unit will see a different camera.
 
 | Port | Protocol | Purpose |
 |---|---|---|
-| 8554 | TCP | RTSP |
-| 8000 | TCP | ONVIF HTTP and JPEG snapshots |
-| 3702 | UDP | WS-Discovery |
+| 8554 | TCP | RTSP, first camera |
+| 8000 | TCP | ONVIF HTTP and JPEG snapshots, first camera |
+| 3702 | UDP | WS-Discovery, shared by every camera |
+
+Each further camera takes the next free pair with the same offset: 8555 and
+8001, then 8556 and 8002, and so on. The ports are checked only against other
+cameras, not against other software on the machine. Edit a camera's `rtsp.port`
+or `onvif.port` in `config.json` if one collides.
 
 ---
 
@@ -221,7 +270,7 @@ Screen2VMS.sln
 │   ├── Screen2VMS.Onvif             ONVIF device and media services
 │   ├── Screen2VMS.Discovery         WS-Discovery scopes
 │   ├── Screen2VMS.Configuration     JSON configuration and credential storage
-│   ├── Screen2VMS.Engine            pipeline, runtime, firewall, snapshots
+│   ├── Screen2VMS.Engine            pipeline, per-camera runtimes, firewall, snapshots
 │   ├── Screen2VMS.Logging           Serilog setup
 │   └── Screen2VMS.App               WPF user interface
 ├── tests/Screen2VMS.Tests

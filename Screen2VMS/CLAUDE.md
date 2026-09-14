@@ -32,10 +32,12 @@ wrong.
 | 5 | Genetec discovers, adds, displays, records | Discovery + full ONVIF interrogation working against real Genetec 5.14 |
 | 6 | XProtect discovers, adds, displays, records | **Built, not verified** — needs XProtect |
 | 7 | Stability, reconnect, sleep/resume | Implemented; soak run done, 24-hour run outstanding |
+| — | Multiple cameras (scope override) | **Built, unit-tested, not verified** — two ONVIF hosts coexist in-process; never added to a VMS, never soaked |
 
 Phases 5 and 6 are code-complete: everything a VMS asks for is implemented and
-passes an independent ONVIF probe. What has *not* happened is an actual add
-against Genetec or XProtect. See "Verifying against a real VMS" below.
+passes an independent ONVIF probe. Genetec 5.14 has added a single camera (see
+"What Genetec actually calls"); XProtect has not been tried, and neither VMS has
+seen two Screen2VMS cameras at once. See "Verifying against a real VMS" below.
 
 ---
 
@@ -181,7 +183,7 @@ Camera → Encoder → EncodedFrame → StreamManager → RtspServer → clients
                        OnvifServiceHost ┘  (metadata, URIs and snapshots only)
 ```
 
-is one `Screen2VmsRuntime`. `CameraRuntimeManager` (`Screen2VMS.Engine`) owns
+That whole pipeline is one `Screen2VmsRuntime`. `CameraRuntimeManager` (`Screen2VMS.Engine`) owns
 one of these per configured `CameraProfile`, each on its own RTSP/ONVIF ports
 and identity, all running in the same process (see "Multi-camera (scope
 override)" above):
@@ -229,6 +231,19 @@ override)" above. `MultiCameraOnvifHostTests` is the test that proves it still
 works; if it starts failing, that is a real architectural blocker, not
 something to patch around.
 
+**Firewall rule names changed with multi-camera.** Rules are now
+`Screen2VMS RTSP (<camera name>)` / `Screen2VMS ONVIF (<camera name>)`, and
+`FirewallRules.TryCreate` removes only the names it is about to add. So the
+old single-camera `Screen2VMS RTSP` / `Screen2VMS ONVIF` rules are never
+cleaned up, removing a camera leaves its rules behind, and two cameras with the
+same device name would share a rule name — the second replaces the first.
+
+**The test project must reference every project its tests import.** The
+multi-camera branch was pushed from a Linux session that cannot build
+`net8.0-windows`, and `CameraRuntimeManagerTests` shipped without a reference to
+`Screen2VMS.Engine`, so the solution did not compile. Build on Windows before
+trusting a commit that claims tests pass.
+
 **Media Foundation objects are not agile.** Anything created on one thread must
 be used on that thread. Capture and encoding each own a dedicated MTA thread;
 enumeration uses `MtaRunner`. Never touch a COM object from the WPF UI thread.
@@ -255,7 +270,9 @@ serial number and synthetic MAC are generated once into `config.json`.
 Genetec keys on the serial, Milestone on the MAC. Change either and the VMS
 treats that camera as new.
 
-**The ONVIF password is generated per install** and stored DPAPI-encrypted
+**The ONVIF password is generated per camera profile** (the tile generates it
+on first load; a migrated single-camera config keeps its old one) and stored
+DPAPI-encrypted
 (machine scope, so a future service account can read it). There is deliberately
 no default password. A config copied from another machine will not decrypt, and
 that is treated as "no password set" rather than an error.
@@ -273,7 +290,7 @@ fault — Settings → Privacy & security → Camera.
 ```bash
 cd Screen2VMS
 dotnet build                                          # whole solution
-dotnet test tests/Screen2VMS.Tests                    # 69 tests, no hardware needed
+dotnet test tests/Screen2VMS.Tests                    # 86 tests, no hardware needed
 dotnet run --project src/Screen2VMS.App               # the GUI
 ```
 
@@ -319,9 +336,16 @@ This is the outstanding work. Both platforms need the same three things:
 1. The device on the same subnet as the VMS server. **WS-Discovery is multicast
    and does not cross subnets** — on a different VLAN the unit must be added by
    IP instead, which is supported but is a different test.
-2. Inbound TCP 8554, TCP 8000 and UDP 3702 allowed. The window has a
-   **Firewall Rules** button that creates them (one UAC prompt).
-3. The user name and password shown in the window.
+2. Inbound UDP 3702 plus each camera's RTSP and ONVIF ports allowed (8554/8000
+   for the first camera, then the next pair — `CameraProfileDefaults`). The
+   **Firewall Rules** button creates rules for every camera configured at the
+   time it is pressed (one UAC prompt).
+3. The user name and password shown on that camera's tile. Every camera has its
+   own.
+
+Every camera reports the same `Screen2VMS Virtual Camera` name in discovery and
+`GetDeviceInformation` (`OnvifDeviceInfo.Name` is never set per profile), so a
+multi-camera test has to tell units apart by port or serial.
 
 Capture the SOAP exchanges into `docs/protocol/genetec/` and
 `docs/protocol/xprotect/` as they are gathered (spec 67) — the goal is not valid
@@ -470,6 +494,7 @@ selection, so if the new camera offers the same resolution or frame rate as the
 old one — 30 fps is near universal — no notification fires and the box sits
 blank while the view model still holds a perfectly good value.
 
-`RebuildModeLists` and `RebuildFrameRates` therefore assign the backing field
+`RebuildModeLists` and `RebuildFrameRates` (now in `CameraTileViewModel`, one
+per tile) therefore assign the backing field
 directly and raise the notification unconditionally, guarded by `rebuilding` so
 the transient nulls the combo boxes push back during the rebuild are ignored.

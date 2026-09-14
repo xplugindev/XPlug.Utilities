@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Screen2VMS.Camera\Screen2VMS.Camera.csproj" />
     <ProjectReference Include="..\..\src\Screen2VMS.Configuration\Screen2VMS.Configuration.csproj" />
     <ProjectReference Include="..\..\src\Screen2VMS.Discovery\Screen2VMS.Discovery.csproj" />
+    <ProjectReference Include="..\..\src\Screen2VMS.Engine\Screen2VMS.Engine.csproj" />
     <ProjectReference Include="..\..\src\Screen2VMS.Onvif\Screen2VMS.Onvif.csproj" />
   </ItemGroup>
 
