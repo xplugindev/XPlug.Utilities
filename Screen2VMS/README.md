@@ -15,8 +15,9 @@ Several cameras can run at once. Each one is published as its own independent
 ONVIF device with its own ports, serial number and password, so a VMS adds them
 as separate units.
 
-**Version 0.1 — the streaming device is complete and independently verified.
-Acceptance against Genetec and XProtect themselves is still outstanding.**
+**Version 0.1 — the streaming device is complete and independently verified,
+and Genetec Security Center 5.14 adds a single camera. Milestone XProtect, and
+more than one camera in either VMS, are still untested.**
 
 ---
 
@@ -62,9 +63,9 @@ product:
 
 Known gaps, in case they matter to you: **Milestone XProtect has never been
 tested** (Genetec 5.14 is verified, with a single camera), **running several
-cameras has never been tried against either VMS**, the single-camera process settles around 354 MB against
-the spec's 250 MB target, and the 24-hour soak has only ever been run for 16
-minutes.
+cameras has never been tried against either VMS**, the single-camera process
+settles around 354 MB against the spec's 250 MB target, and the 24-hour soak
+has only ever been run for 16 minutes.
 
 If this ever changes hands or purpose, treat that table as a blocking checklist
 rather than a footnote.
@@ -81,7 +82,7 @@ rather than a footnote.
 | Streaming | RTSP over TCP or UDP, multiple simultaneous clients from one encode |
 | Discovery | ONVIF WS-Discovery on UDP 3702 with Profile-S scopes |
 | ONVIF | Device and media services, 28 operations, snapshots |
-| Security | WS-Security UsernameToken and HTTP Digest, per-install password |
+| Security | WS-Security UsernameToken and HTTP Digest, a generated password per camera |
 | Recovery | Camera disconnect, camera busy, sleep and resume |
 
 Verified independently of the code that produced it: ffmpeg confirms the camera
@@ -173,6 +174,15 @@ settings and logs in `%ProgramData%\Screen2VMS\`.
 
 Pass `-Compress $false` for a larger file that starts a little faster.
 
+From Visual Studio, right-click **Screen2VMS.App → Publish**, choose
+**FolderProfile** and press **Publish**. It writes the same single file to the
+same `dist` folder, using
+`src/Screen2VMS.App/Properties/PublishProfiles/FolderProfile.pubxml`. From a
+terminal, the equivalent is
+`dotnet publish src/Screen2VMS.App -p:PublishProfile=FolderProfile`.
+
+The script and the profile carry the same switches and have to be kept in step.
+
 Two things about that script are deliberate:
 
 - The publish switches live in the script rather than the `.csproj`. Setting a
@@ -192,6 +202,34 @@ ONVIF discovery scopes, credential protection, configuration round-tripping and
 migration, per-camera port allocation, the multi-camera runtime manager, the
 ONVIF host's start/stop lifecycle, and two ONVIF hosts running side by side.
 None of them need a camera.
+
+## Continuous integration and releases
+
+`.github/workflows/screen2vms.yml` runs on GitHub's Windows runners for every
+push and pull request that touches `Screen2VMS/`. It builds the solution, runs
+the tests and runs `tools/Publish.ps1`. The resulting `Screen2VMS.exe` and its
+SHA-256 are kept as an artifact on the run, so any commit's build can be
+downloaded from the **Actions** tab without making a release.
+
+To release:
+
+1. Set `<Version>` (and `AssemblyVersion`/`FileVersion`) in
+   `Directory.Build.props`, and merge that to `main`.
+2. Tag the merge commit `screen2vms-v<version>` and push the tag:
+
+   ```bash
+   git tag screen2vms-v0.2.0
+   git push origin screen2vms-v0.2.0
+   ```
+
+3. The workflow checks that the tag matches `<Version>`, builds and tests, and
+   creates a **draft** release with the exe attached and its SHA-256 in the notes.
+4. Review the draft on the Releases page, add what changed, and press
+   **Publish release**. Until then the draft is not public and
+   `releases/latest` still points at the previous version.
+
+The workflow file can only be pushed with a token that has the `workflow`
+scope. If `git push` refuses it, run `gh auth refresh -s workflow` once.
 
 ---
 
@@ -313,3 +351,7 @@ MIT means no warranty. Given the scope note above, take that literally.
 - `PROJECT_INSTRUCTIONS.md` — the full product specification
 - `CLAUDE.md` — architecture, decisions, spec corrections, and the traps worth
   knowing about before changing anything
+- `tools/README.md` — the ONVIF, discovery and soak verification scripts
+- `THIRD-PARTY-NOTICES.md` — every bundled dependency and its licence
+- `docs/protocol/` — where captured Genetec and XProtect exchanges go (empty so
+  far)

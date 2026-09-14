@@ -292,7 +292,24 @@ cd Screen2VMS
 dotnet build                                          # whole solution
 dotnet test tests/Screen2VMS.Tests                    # 86 tests, no hardware needed
 dotnet run --project src/Screen2VMS.App               # the GUI
+.\tools\Publish.ps1                                   # single-file dist\Screen2VMS.exe
 ```
+
+The single-file publish exists twice: `tools/Publish.ps1` (terminal and CI) and
+`src/Screen2VMS.App/Properties/PublishProfiles/FolderProfile.pubxml` (Visual
+Studio's Publish dialog). **Change the switches in both.** The profile is not a
+straight copy. A publish profile's properties reach only the App project, not
+the projects it references, so `DebugType=none` alone still copies ten
+referenced `.pdb` files into `dist`. `AllowedReferenceRelatedFileExtensions`
+is what stops that. `Publish.ps1` doesn't need it because its `-p:` switches are
+global properties.
+
+CI is `.github/workflows/screen2vms.yml` at the repo root, on `windows-latest`.
+It builds, tests and publishes on every push touching `Screen2VMS/`. A
+`screen2vms-v<version>` tag also creates a **draft** release, and only if the tag
+matches `<Version>` in `Directory.Build.props`. The owner publishes the draft by
+hand. Releases are tagged with the project prefix because this repo holds more
+than one project.
 
 Runtime state lives in `%ProgramData%\Screen2VMS\` — `config.json` and `Logs\`.
 Deleting `config.json` regenerates the device identity and password, which makes
