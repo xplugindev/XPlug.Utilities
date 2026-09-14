@@ -228,8 +228,9 @@ To release:
    **Publish release**. Until then the draft is not public and
    `releases/latest` still points at the previous version.
 
-The workflow file can only be pushed with a token that has the `workflow`
-scope. If `git push` refuses it, run `gh auth refresh -s workflow` once.
+Changing the workflow file over HTTPS needs a token with the `workflow` scope.
+If `git push` refuses it, run `gh auth refresh -s workflow` once. Pushing over
+SSH needs nothing extra.
 
 ---
 
