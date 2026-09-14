@@ -3,6 +3,18 @@ namespace Screen2VMS.Core.Configuration;
 /// <summary>Everything Screen2VMS persists between runs (spec 56).</summary>
 public sealed record AppConfiguration
 {
+    /// <summary>
+    /// One entry per camera published as its own ONVIF device/RTSP stream.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="Device"/>, <see cref="Camera"/>, <see cref="Rtsp"/> and
+    /// <see cref="Onvif"/> properties below are the pre-multi-camera schema.
+    /// They are kept only so <c>JsonConfigurationService</c> can read an old
+    /// single-camera config.json and migrate it into one <see cref="CameraProfile"/>
+    /// without losing the identity a VMS has already enrolled.
+    /// </remarks>
+    public IReadOnlyList<CameraProfile> Cameras { get; init; } = [];
+
     public DeviceConfiguration Device { get; init; } = new();
 
     public CameraConfiguration Camera { get; init; } = new();
@@ -16,6 +28,28 @@ public sealed record AppConfiguration
     public DiscoveryConfiguration Discovery { get; init; } = new();
 
     public LoggingConfiguration Logging { get; init; } = new();
+}
+
+/// <summary>
+/// One camera, published as an independent ONVIF device with its own RTSP
+/// stream. Each profile owns its own identity and ports so it enrolls in a
+/// VMS as a distinct unit (spec override, see CLAUDE.md "multi-camera").
+/// </summary>
+public sealed record CameraProfile
+{
+    /// <summary>Stable identifier for this profile, independent of the physical device id.</summary>
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>This profile's persistent serial number and MAC (spec 19).</summary>
+    public DeviceConfiguration Device { get; init; } = new();
+
+    public CameraConfiguration Camera { get; init; } = new();
+
+    public RtspConfiguration Rtsp { get; init; } = new();
+
+    public OnvifConfiguration Onvif { get; init; } = new();
 }
 
 /// <summary>

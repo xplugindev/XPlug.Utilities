@@ -1,14 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.Windows;
-using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
-using Screen2VMS.App.Views;
-using Screen2VMS.Configuration;
 using Screen2VMS.Core.Cameras;
 using Screen2VMS.Core.Configuration;
-using Screen2VMS.Core.Diagnostics;
 using Screen2VMS.Engine;
 
 namespace Screen2VMS.App.ViewModels;
@@ -17,54 +12,50 @@ namespace Screen2VMS.App.ViewModels;
 /// Drives the main window (spec 28, 63).
 /// </summary>
 /// <remarks>
-/// Presentation only. Everything it shows comes from
-/// <see cref="Screen2VmsRuntime"/>, which knows nothing about WPF.
+/// Presentation only. Owns the collection of configured cameras and the
+/// "add a camera" flow; everything about running one camera lives in its own
+/// <see cref="CameraTileViewModel"/> (spec override, see CLAUDE.md
+/// "multi-camera").
 /// </remarks>
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly ICameraSourceService cameraService;
     private readonly IConfigurationService configuration;
-    private readonly Screen2VmsRuntime runtime;
+    private readonly CameraRuntimeManager runtimeManager;
+    private readonly ILoggerFactory loggerFactory;
     private readonly ILogger<MainViewModel> logger;
-    private readonly PreviewSink preview;
     private readonly DispatcherTimer statusTimer;
     private readonly Dispatcher dispatcher;
 
-    private CameraDevice? selectedDevice;
-    private Resolution? selectedResolution;
-    private double selectedFrameRate = CameraSettings.DefaultFrameRate;
-    private int bitrateKbps = 4000;
-    private string statusMessage = "Select a camera and press Start.";
-    private string onvifPassword = string.Empty;
-    private bool rebuilding;
+    private CameraDevice? deviceToAdd;
+    /// <summary>How long a one-off message outlives the once-a-second status refresh.</summary>
+    private static readonly TimeSpan NoticeDuration = TimeSpan.FromSeconds(10);
+
+    private string statusMessage = "Add a camera to get started.";
+    private string? notice;
+    private DateTime noticeExpiresUtc;
     private bool disposed;
 
     public MainViewModel(
         ICameraSourceService cameraService,
         IConfigurationService configuration,
-        Screen2VmsRuntime runtime,
+        CameraRuntimeManager runtimeManager,
         Dispatcher dispatcher,
-        ILogger<MainViewModel> logger)
+        ILoggerFactory loggerFactory)
     {
         this.cameraService = cameraService;
         this.configuration = configuration;
-        this.runtime = runtime;
+        this.runtimeManager = runtimeManager;
         this.dispatcher = dispatcher;
-        this.logger = logger;
+        this.loggerFactory = loggerFactory;
+        logger = loggerFactory.CreateLogger<MainViewModel>();
 
-        preview = new PreviewSink(dispatcher);
-        preview.ImageChanged += (_, _) => OnPropertyChanged(nameof(PreviewImage));
-
-        StartCommand = new RelayCommand(Start, () => SelectedDevice is not null && !IsRunning);
-        StopCommand = new RelayCommand(Stop, () => IsRunning);
-        RefreshCommand = new RelayCommand(RefreshDevices, () => !IsRunning);
+        AddCameraCommand = new RelayCommand(AddCamera, () => DeviceToAdd is not null);
+        RefreshCommand = new RelayCommand(RefreshDevices);
+        StartAllCommand = new RelayCommand(StartAll, () => Cameras.Any(c => !c.IsRunning && !c.DeviceMissing));
+        StopAllCommand = new RelayCommand(StopAll, () => Cameras.Any(c => c.IsRunning));
         OpenLogsCommand = new RelayCommand(OpenLogs);
-        CopyStreamUriCommand = new RelayCommand(CopyStreamUri, () => !string.IsNullOrEmpty(StreamUri));
-        CopyOnvifUriCommand = new RelayCommand(CopyOnvifUri, () => !string.IsNullOrEmpty(OnvifUri));
-        CopyPasswordCommand = new RelayCommand(CopyPassword, () => !string.IsNullOrEmpty(OnvifPassword));
         CreateFirewallRulesCommand = new RelayCommand(CreateFirewallRules);
-
-        runtime.Health.Changed += OnHealthChanged;
 
         statusTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
         {
@@ -74,149 +65,47 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         statusTimer.Tick += (_, _) => RefreshStatistics();
         statusTimer.Start();
 
-        LoadCredentials();
+        Cameras.CollectionChanged += (_, _) => OnPropertyChanged(nameof(NoCamerasConfigured));
+
+        LoadConfiguredCameras();
         RefreshDevices();
     }
 
-    public ObservableCollection<CameraDevice> Devices { get; } = new();
+    public ObservableCollection<CameraTileViewModel> Cameras { get; } = new();
 
-    public ObservableCollection<Resolution> Resolutions { get; } = new();
+    /// <summary>Whether the "add a camera to get started" placeholder should show.</summary>
+    public bool NoCamerasConfigured => Cameras.Count == 0;
 
-    public ObservableCollection<double> FrameRates { get; } = new();
+    public ObservableCollection<CameraDevice> AvailableDevices { get; } = new();
 
-    public RelayCommand StartCommand { get; }
-
-    public RelayCommand StopCommand { get; }
+    public RelayCommand AddCameraCommand { get; }
 
     public RelayCommand RefreshCommand { get; }
 
+    public RelayCommand StartAllCommand { get; }
+
+    public RelayCommand StopAllCommand { get; }
+
     public RelayCommand OpenLogsCommand { get; }
-
-    public RelayCommand CopyStreamUriCommand { get; }
-
-    public RelayCommand CopyOnvifUriCommand { get; }
-
-    public RelayCommand CopyPasswordCommand { get; }
 
     public RelayCommand CreateFirewallRulesCommand { get; }
 
-    public ImageSource? PreviewImage => preview.Image;
-
-    public bool IsRunning => runtime.IsRunning;
-
-    public CameraDevice? SelectedDevice
+    public CameraDevice? DeviceToAdd
     {
-        get => selectedDevice;
+        get => deviceToAdd;
         set
         {
-            if (SetProperty(ref selectedDevice, value))
+            if (SetProperty(ref deviceToAdd, value))
             {
-                RebuildModeLists();
-                RaiseCommandStates();
+                AddCameraCommand.RaiseCanExecuteChanged();
             }
         }
-    }
-
-    public Resolution? SelectedResolution
-    {
-        get => selectedResolution;
-        set
-        {
-            // While the lists are being rebuilt the combo boxes push their own
-            // transient nulls back here as their items are replaced. Acting on
-            // those would clear the frame rates that are about to be filled in.
-            if (SetProperty(ref selectedResolution, value) && !rebuilding)
-            {
-                RebuildFrameRates();
-            }
-        }
-    }
-
-    public double SelectedFrameRate
-    {
-        get => selectedFrameRate;
-        set => SetProperty(ref selectedFrameRate, value);
-    }
-
-    public int BitrateKbps
-    {
-        get => bitrateKbps;
-        set => SetProperty(ref bitrateKbps, value);
     }
 
     public string StatusMessage
     {
         get => statusMessage;
         private set => SetProperty(ref statusMessage, value);
-    }
-
-    public string OnvifUserName => configuration.Current.Onvif.Username;
-
-    public string OnvifPassword
-    {
-        get => onvifPassword;
-        private set => SetProperty(ref onvifPassword, value);
-    }
-
-    public string? StreamUri => runtime.StreamUri;
-
-    public string? OnvifUri => runtime.OnvifUri;
-
-    // --- Component status (spec 36, 63) ---
-
-    public ComponentState CameraState => StateOf(ComponentNames.Camera);
-
-    public ComponentState EncoderState => StateOf(ComponentNames.Encoder);
-
-    public ComponentState RtspState => StateOf(ComponentNames.Rtsp);
-
-    public ComponentState OnvifState => StateOf(ComponentNames.Onvif);
-
-    public ComponentState DiscoveryState => StateOf(ComponentNames.Discovery);
-
-    public string CameraDetail => DetailOf(ComponentNames.Camera);
-
-    public string EncoderDetail => DetailOf(ComponentNames.Encoder);
-
-    public string RtspDetail => DetailOf(ComponentNames.Rtsp);
-
-    public string OnvifDetail => DetailOf(ComponentNames.Onvif);
-
-    public string DiscoveryDetail => DetailOf(ComponentNames.Discovery);
-
-    public string ClientCountText => runtime.StreamManager.RtspServer.ClientCount.ToString();
-
-    public string MeasuredFpsText
-    {
-        get
-        {
-            var camera = runtime.StreamManager.Camera;
-            return camera is null ? "-" : $"{camera.Statistics.MeasuredFrameRate:0.0} fps";
-        }
-    }
-
-    public string MeasuredBitrateText
-    {
-        get
-        {
-            var encoder = runtime.StreamManager.Encoder;
-            return encoder is null ? "-" : $"{encoder.Statistics.MeasuredBitrateKbps:0} kbps";
-        }
-    }
-
-    public string FramesText
-    {
-        get
-        {
-            var encoder = runtime.StreamManager.Encoder;
-            if (encoder is null)
-            {
-                return "-";
-            }
-
-            var statistics = encoder.Statistics;
-            return $"{statistics.FramesEncoded:N0} encoded, {statistics.FramesDropped:N0} dropped";
-        }
     }
 
     public void Dispose()
@@ -228,328 +117,207 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         disposed = true;
         statusTimer.Stop();
-        runtime.Health.Changed -= OnHealthChanged;
-        Stop();
-        preview.Dispose();
-    }
 
-    /// <summary>
-    /// Loads the ONVIF password, generating one on first run.
-    /// </summary>
-    /// <remarks>
-    /// Spec 24 forbids a universal default password, so each installation gets
-    /// its own. It is shown in the window because the operator has to type it
-    /// into the VMS.
-    /// </remarks>
-    private void LoadCredentials()
-    {
-        var stored = PasswordProtector.Unprotect(configuration.Current.Onvif.ProtectedPassword);
-
-        if (stored is null)
+        foreach (var camera in Cameras)
         {
-            stored = PasswordProtector.GeneratePassword();
-            configuration.Update(config => config with
-            {
-                Onvif = config.Onvif with { ProtectedPassword = PasswordProtector.Protect(stored) },
-            });
-
-            logger.LogInformation("Generated a new ONVIF password for this installation.");
-        }
-
-        OnvifPassword = stored;
-        BitrateKbps = configuration.Current.Encoder.BitrateKbps;
-    }
-
-    private void RefreshDevices()
-    {
-        var previousId = SelectedDevice?.Id ?? configuration.Current.Camera.DeviceId;
-
-        Devices.Clear();
-        foreach (var device in cameraService.EnumerateDevices())
-        {
-            Devices.Add(device);
-        }
-
-        if (Devices.Count == 0)
-        {
-            SelectedDevice = null;
-            StatusMessage = "No camera found. Connect a webcam and press Refresh.";
-            return;
-        }
-
-        SelectedDevice = Devices.FirstOrDefault(d => d.Id == previousId) ?? Devices[0];
-        StatusMessage = $"{Devices.Count} camera(s) found.";
-    }
-
-    /// <summary>
-    /// Repopulates the resolution list for the selected camera and picks one.
-    /// </summary>
-    /// <remarks>
-    /// The chosen value is announced unconditionally, even when it happens to
-    /// equal what was already there. Clearing a combo box's items resets its
-    /// selection, so if the new camera offers the same resolution as the old
-    /// one, a change-only notification would never fire and the box would sit
-    /// blank with the view model still holding a value.
-    /// </remarks>
-    private void RebuildModeLists()
-    {
-        rebuilding = true;
-
-        try
-        {
-            Resolutions.Clear();
-
-            if (SelectedDevice is null)
-            {
-                selectedResolution = null;
-                return;
-            }
-
-            if (SelectedDevice.Modes.Count == 0)
-            {
-                StatusMessage =
-                    $"'{SelectedDevice.Name}' could not be opened to read its modes. " +
-                    "It may be in use by another application.";
-                selectedResolution = null;
-                return;
-            }
-
-            var resolutions = SelectedDevice.Modes
-                .Select(m => new Resolution(m.Width, m.Height))
-                .Distinct()
-                .OrderByDescending(r => r.PixelCount)
-                .ToList();
-
-            foreach (var resolution in resolutions)
-            {
-                Resolutions.Add(resolution);
-            }
-
-            var preferred = configuration.Current.Camera;
-
-            selectedResolution =
-                resolutions.FirstOrDefault(r => r.Width == preferred.Width && r.Height == preferred.Height)
-                ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.DefaultWidth && r.Height == CameraSettings.DefaultHeight)
-                ?? resolutions.FirstOrDefault(r => r.Width == CameraSettings.FallbackWidth && r.Height == CameraSettings.FallbackHeight)
-                ?? resolutions[0];
-        }
-        finally
-        {
-            rebuilding = false;
-            OnPropertyChanged(nameof(SelectedResolution));
-            RebuildFrameRates();
+            camera.Dispose();
         }
     }
 
-    /// <summary>
-    /// Repopulates the frame rates offered for the selected resolution.
-    /// </summary>
-    /// <remarks>
-    /// Like the resolution list, the chosen rate is announced unconditionally.
-    /// Two cameras commonly share a rate - 30 fps is near universal - so a
-    /// change-only notification leaves the box blank after switching between
-    /// them.
-    /// </remarks>
-    private void RebuildFrameRates()
+    /// <summary>Builds one tile per profile already in config.json. None are started automatically.</summary>
+    private void LoadConfiguredCameras()
     {
-        rebuilding = true;
+        var devices = cameraService.EnumerateDevices();
 
-        try
+        foreach (var profile in configuration.Current.Cameras)
         {
-            FrameRates.Clear();
-
-            if (SelectedDevice is null || SelectedResolution is null)
-            {
-                return;
-            }
-
-            var rates = SelectedDevice.Modes
-                .Where(m => m.Width == SelectedResolution.Width && m.Height == SelectedResolution.Height)
-                .SelectMany(m => new[] { m.MinFrameRate, m.MaxFrameRate })
-                .Where(r => r > 0)
-                .Select(r => Math.Round(r, 2))
-                .Distinct()
-                .OrderByDescending(r => r)
-                .ToList();
-
-            if (rates.Count == 0)
-            {
-                // A camera that advertises no frame rate still has to be
-                // usable; the driver picks whatever it runs at.
-                rates.Add(CameraSettings.DefaultFrameRate);
-            }
-
-            foreach (var rate in rates)
-            {
-                FrameRates.Add(rate);
-            }
-
-            var configured = configuration.Current.Camera.Fps;
-            selectedFrameRate = rates.Contains(configured)
-                ? configured
-                : rates.FirstOrDefault(r => Math.Abs(r - CameraSettings.DefaultFrameRate) < 0.01, rates[0]);
+            var device = devices.FirstOrDefault(d => d.Id == profile.Camera.DeviceId);
+            Cameras.Add(CreateTile(profile, device));
         }
-        finally
-        {
-            rebuilding = false;
-            OnPropertyChanged(nameof(SelectedFrameRate));
-        }
+
+        UpdateStatusMessage();
     }
 
-    private void Start()
+    private void AddCamera()
     {
-        if (SelectedDevice is null)
-        {
-            return;
-        }
-
-        var cameraSettings = new CameraSettings
-        {
-            Width = SelectedResolution?.Width ?? CameraSettings.DefaultWidth,
-            Height = SelectedResolution?.Height ?? CameraSettings.DefaultHeight,
-            FrameRate = SelectedFrameRate,
-        };
-
-        try
-        {
-            StatusMessage = $"Starting {SelectedDevice.Name}...";
-            PersistSelection(cameraSettings);
-
-            runtime.Start(configuration.Current, SelectedDevice.Id, cameraSettings, OnvifPassword);
-            runtime.StreamManager.Camera?.AddSink(preview);
-
-            StatusMessage = runtime.OnvifUri is null
-                ? "Streaming. ONVIF did not start; check the log."
-                : "Streaming. The camera is discoverable on the network.";
-        }
-        catch (CameraBusyException ex)
-        {
-            StatusMessage = ex.Message;
-            logger.LogWarning(ex, "Camera {Camera} is unavailable.", SelectedDevice.Name);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = ex.Message;
-            logger.LogError(ex, "Could not start Screen2VMS.");
-        }
-        finally
-        {
-            RaiseAllStatus();
-        }
-    }
-
-    private void Stop()
-    {
-        runtime.StreamManager.Camera?.RemoveSink(preview);
-        runtime.Stop();
-
-        StatusMessage = "Stopped.";
-        RaiseAllStatus();
-    }
-
-    private void PersistSelection(CameraSettings settings)
-    {
-        var device = SelectedDevice;
+        var device = DeviceToAdd;
         if (device is null)
         {
             return;
         }
 
-        configuration.Update(config => config with
+        var (rtspPort, onvifPort) = CameraProfileDefaults.NextPorts(configuration.Current.Cameras);
+
+        var profile = new CameraProfile
         {
-            Camera = config.Camera with
+            Device = new DeviceConfiguration
             {
-                DeviceId = device.Id,
-                Name = device.Name,
-                Width = settings.Width,
-                Height = settings.Height,
-                Fps = settings.FrameRate,
+                SerialNumber = DeviceIdentity.NewSerialNumber(),
+                MacAddress = DeviceIdentity.NewMacAddress(),
             },
-            Encoder = config.Encoder with { BitrateKbps = BitrateKbps },
-        });
+            Camera = new CameraConfiguration { DeviceId = device.Id, Name = device.Name },
+            Rtsp = new RtspConfiguration { Port = rtspPort },
+            Onvif = new OnvifConfiguration { Port = onvifPort },
+        };
+
+        configuration.Update(config => config with { Cameras = [.. config.Cameras, profile] });
+
+        Cameras.Add(CreateTile(profile, device));
+        RefreshDevices();
+        UpdateStatusMessage();
     }
 
-    private void OnHealthChanged(object? sender, HealthSnapshot snapshot) =>
-        dispatcher.BeginInvoke(new Action(RaiseAllStatus));
-
-    private void RefreshStatistics()
+    private CameraTileViewModel CreateTile(CameraProfile profile, CameraDevice? device)
     {
-        if (!IsRunning)
+        var runtime = runtimeManager.GetOrCreate(profile.Id);
+        var tile = new CameraTileViewModel(
+            profile,
+            device,
+            configuration,
+            runtime,
+            dispatcher,
+            loggerFactory.CreateLogger<CameraTileViewModel>(),
+            UpdateProfile,
+            RemoveCamera);
+
+        tile.PropertyChanged += (_, args) =>
         {
-            return;
-        }
+            if (args.PropertyName is nameof(CameraTileViewModel.IsRunning) or nameof(CameraTileViewModel.DeviceMissing))
+            {
+                RaiseCommandStates();
+            }
+        };
 
-        OnPropertyChanged(nameof(MeasuredFpsText));
-        OnPropertyChanged(nameof(MeasuredBitrateText));
-        OnPropertyChanged(nameof(FramesText));
-        OnPropertyChanged(nameof(ClientCountText));
+        return tile;
     }
 
-    private void RaiseAllStatus()
+    private void RemoveCamera(CameraTileViewModel tile)
     {
-        OnPropertyChanged(nameof(IsRunning));
-        OnPropertyChanged(nameof(StreamUri));
-        OnPropertyChanged(nameof(OnvifUri));
-        OnPropertyChanged(nameof(CameraState));
-        OnPropertyChanged(nameof(EncoderState));
-        OnPropertyChanged(nameof(RtspState));
-        OnPropertyChanged(nameof(OnvifState));
-        OnPropertyChanged(nameof(DiscoveryState));
-        OnPropertyChanged(nameof(CameraDetail));
-        OnPropertyChanged(nameof(EncoderDetail));
-        OnPropertyChanged(nameof(RtspDetail));
-        OnPropertyChanged(nameof(OnvifDetail));
-        OnPropertyChanged(nameof(DiscoveryDetail));
-        RefreshStatistics();
+        Cameras.Remove(tile);
+        tile.Dispose();
+        runtimeManager.Remove(tile.Id);
+        configuration.Update(config => config with { Cameras = config.Cameras.Where(p => p.Id != tile.Id).ToList() });
+
+        RefreshDevices();
+
+        // Closing its ports needs elevation, and a UAC prompt on every Remove
+        // would be worse than a hint: the next Firewall Rules sync removes them.
+        ShowNotice($"Removed {tile.Name}. If you created firewall rules, press Firewall Rules to close its ports.");
         RaiseCommandStates();
     }
 
-    private ComponentState StateOf(string component) =>
-        runtime.Health.Current.Components.TryGetValue(component, out var health)
-            ? health.State
-            : ComponentState.Stopped;
-
-    private string DetailOf(string component) =>
-        runtime.Health.Current.Components.TryGetValue(component, out var health)
-            ? health.Detail ?? health.State.ToString()
-            : "Stopped";
-
-    private void CopyStreamUri() => CopyToClipboard(StreamUri, "RTSP address copied.");
-
-    private void CopyOnvifUri() => CopyToClipboard(OnvifUri, "ONVIF address copied.");
-
-    private void CopyPassword() => CopyToClipboard(OnvifPassword, "Password copied.");
-
-    private void CopyToClipboard(string? text, string confirmation)
-    {
-        if (string.IsNullOrEmpty(text))
+    private void UpdateProfile(string profileId, Func<CameraProfile, CameraProfile> mutate) =>
+        configuration.Update(config => config with
         {
+            Cameras = config.Cameras.Select(p => p.Id == profileId ? mutate(p) : p).ToList(),
+        });
+
+    private void RefreshDevices()
+    {
+        var devices = cameraService.EnumerateDevices();
+
+        // Each tile is matched to the physical device it was configured for,
+        // independent of whether that device is still attached - a camera
+        // that is unplugged should show as missing, not disappear.
+        var configuredDeviceIds = configuration.Current.Cameras
+            .Select(p => p.Camera.DeviceId)
+            .Where(id => id is not null)
+            .ToHashSet();
+
+        foreach (var camera in Cameras)
+        {
+            var configuredId = configuration.Current.Cameras.FirstOrDefault(p => p.Id == camera.Id)?.Camera.DeviceId;
+            camera.UpdateDevice(devices.FirstOrDefault(d => d.Id == configuredId));
+        }
+
+        AvailableDevices.Clear();
+        foreach (var device in devices.Where(d => !configuredDeviceIds.Contains(d.Id)))
+        {
+            AvailableDevices.Add(device);
+        }
+
+        DeviceToAdd = AvailableDevices.FirstOrDefault();
+        UpdateStatusMessage();
+        RaiseCommandStates();
+    }
+
+    /// <summary>
+    /// Shows a message that the once-a-second refresh leaves alone for a while.
+    /// Without this, the result of an action was overwritten within a second.
+    /// </summary>
+    private void ShowNotice(string message)
+    {
+        notice = message;
+        noticeExpiresUtc = DateTime.UtcNow + NoticeDuration;
+        UpdateStatusMessage();
+    }
+
+    private void UpdateStatusMessage()
+    {
+        if (notice is not null)
+        {
+            if (DateTime.UtcNow < noticeExpiresUtc)
+            {
+                StatusMessage = notice;
+                return;
+            }
+
+            notice = null;
+        }
+
+        if (Cameras.Count == 0)
+        {
+            StatusMessage = AvailableDevices.Count == 0
+                ? "No camera found. Connect a webcam and press Refresh."
+                : "Add a camera to get started.";
             return;
         }
 
-        try
+        var running = Cameras.Count(c => c.IsRunning);
+        StatusMessage = $"{Cameras.Count} camera(s) configured, {running} running.";
+    }
+
+    private void StartAll()
+    {
+        foreach (var camera in Cameras.Where(c => !c.IsRunning && !c.DeviceMissing))
         {
-            Clipboard.SetText(text);
-            StatusMessage = confirmation;
+            camera.StartCommand.Execute(null);
         }
-        catch (Exception ex)
+
+        UpdateStatusMessage();
+    }
+
+    private void StopAll()
+    {
+        foreach (var camera in Cameras.Where(c => c.IsRunning))
         {
-            // Another process can hold the clipboard open; not worth an error.
-            logger.LogDebug(ex, "Could not write to the clipboard.");
+            camera.StopCommand.Execute(null);
         }
+
+        UpdateStatusMessage();
+    }
+
+    private void RefreshStatistics()
+    {
+        foreach (var camera in Cameras)
+        {
+            camera.RefreshStatistics();
+        }
+
+        UpdateStatusMessage();
     }
 
     private void CreateFirewallRules()
     {
-        var config = configuration.Current;
+        // A full sync: rules for removed cameras and from older versions go too.
+        var rules = FirewallRules.For(configuration.Current);
+        var cameraCount = configuration.Current.Cameras.Count;
 
-        StatusMessage = FirewallRules.TryCreate(
-            config.Rtsp.Port,
-            config.Onvif.Port,
-            config.Discovery.Port,
-            logger)
-            ? "Firewall rules created."
-            : "Firewall rules were not created. Administrator approval is required.";
+        ShowNotice(FirewallRules.TrySync(rules, logger)
+            ? cameraCount == 0
+                ? "Firewall rules removed - no cameras are configured."
+                : $"Firewall rules updated for {cameraCount} camera(s)."
+            : "Firewall rules were not changed. Administrator approval is required.");
     }
 
     private void OpenLogs()
@@ -565,19 +333,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void RaiseCommandStates()
     {
-        StartCommand.RaiseCanExecuteChanged();
-        StopCommand.RaiseCanExecuteChanged();
-        RefreshCommand.RaiseCanExecuteChanged();
-        CopyStreamUriCommand.RaiseCanExecuteChanged();
-        CopyOnvifUriCommand.RaiseCanExecuteChanged();
-        CopyPasswordCommand.RaiseCanExecuteChanged();
-    }
-
-    /// <summary>A resolution offered in the dropdown.</summary>
-    public sealed record Resolution(int Width, int Height)
-    {
-        public long PixelCount => (long)Width * Height;
-
-        public override string ToString() => $"{Width} x {Height}";
+        StartAllCommand.RaiseCanExecuteChanged();
+        StopAllCommand.RaiseCanExecuteChanged();
+        AddCameraCommand.RaiseCanExecuteChanged();
     }
 }

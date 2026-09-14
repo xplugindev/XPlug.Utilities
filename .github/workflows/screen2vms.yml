@@ -1,0 +1,133 @@
+# Builds, tests and publishes Screen2VMS as one self-contained executable.
+#
+# - Every push or pull request touching Screen2VMS: build, run the tests, and
+#   keep Screen2VMS.exe as a downloadable artifact on the run.
+# - A tag named screen2vms-v<version> (e.g. screen2vms-v0.2.0): all of the above,
+#   then a DRAFT GitHub release with the exe attached. Review the notes and press
+#   Publish; nothing reaches "latest" until then.
+#
+# The tag must match <Version> in Screen2VMS/Directory.Build.props, so a release
+# can never ship an exe whose file version says something else.
+name: Screen2VMS
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["screen2vms-v*"]
+    paths:
+      - "Screen2VMS/**"
+      - ".github/workflows/screen2vms.yml"
+  pull_request:
+    paths:
+      - "Screen2VMS/**"
+      - ".github/workflows/screen2vms.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screen2vms-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: pwsh
+    working-directory: Screen2VMS
+
+jobs:
+  build:
+    # WPF, Media Foundation and DPAPI: this cannot build or test anywhere else.
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Read version
+        id: version
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if (-not $version) { throw "No <Version> found in Directory.Build.props" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Screen2VMS version $version"
+
+      - name: Check tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $expected = "screen2vms-v${{ steps.version.outputs.version }}"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag ${{ github.ref_name }} does not match Directory.Build.props; expected $expected"
+          }
+
+      - name: Build
+        run: dotnet build Screen2VMS.sln -c Release
+
+      - name: Test
+        run: dotnet test tests/Screen2VMS.Tests -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Publish single-file executable
+        run: ./tools/Publish.ps1
+
+      - name: Checksum
+        run: |
+          $hash = (Get-FileHash dist/Screen2VMS.exe -Algorithm SHA256).Hash
+          $hash | Out-File dist/Screen2VMS.exe.sha256 -Encoding ascii -NoNewline
+          Write-Host "SHA-256 $hash"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Screen2VMS-${{ steps.version.outputs.version }}
+          path: |
+            Screen2VMS/dist/Screen2VMS.exe
+            Screen2VMS/dist/Screen2VMS.exe.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/screen2vms-v')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: Screen2VMS-${{ needs.build.outputs.version }}
+          path: Screen2VMS/dist
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ needs.build.outputs.version }}"
+          $tag = "${{ github.ref_name }}"
+          $hash = Get-Content dist/Screen2VMS.exe.sha256
+
+          $notes = @"
+          Single self-contained executable: download ``Screen2VMS.exe`` and run it. No installer, no .NET runtime needed.
+
+          **SHA-256:** ``$hash``
+
+          The binary is not code-signed, so Windows SmartScreen will warn on first run (*More info -> Run anyway*).
+
+          This is a personal utility, not a product: no security review, no ONVIF certification, plaintext protocols on a trusted LAN only. Read the [scope note](https://github.com/${{ github.repository }}/blob/$tag/Screen2VMS/README.md#scope-personal-utility-not-a-product) before relying on it.
+
+          MIT licensed. Bundled third-party components: [THIRD-PARTY-NOTICES.md](https://github.com/${{ github.repository }}/blob/$tag/Screen2VMS/THIRD-PARTY-NOTICES.md).
+
+          Built by [this workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) from commit ${{ github.sha }}.
+          "@
+
+          $notes | Out-File "$env:RUNNER_TEMP/notes.md" -Encoding utf8
+
+          gh release create $tag dist/Screen2VMS.exe `
+            --draft `
+            --verify-tag `
+            --title "Screen2VMS $version" `
+            --notes-file "$env:RUNNER_TEMP/notes.md"
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

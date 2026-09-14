@@ -10,8 +10,11 @@ Drives 28 ONVIF operations against a running instance, including the negative
 authentication cases.
 
 ```powershell
-.\Test-Onvif.ps1 -Host2 192.168.1.50 -User admin -Pass <password from the window>
+.\Test-Onvif.ps1 -Host2 192.168.1.50 -User admin -Pass <password from the tile>
 ```
+
+`-Port` defaults to 8000, the first camera. For any other camera pass the ONVIF
+port and password shown on its tile, e.g. `-Port 8001`.
 
 Checks, among others:
 
@@ -43,6 +46,12 @@ trend in handles or private bytes; a flat line over the run is the pass.
 ```powershell
 .\Invoke-Soak.ps1 -Minutes 60
 ```
+
+It presses the first **Start** button it finds and pulls
+`rtsp://127.0.0.1:8554/live`, so at least one camera must already be added and
+the first one must be on port 8554. It soaks one camera; a multi-camera soak has
+not been written. The executable path and report path at the top of the script
+are hard-coded to the owner's machine.
 
 ## Note on RTSP credentials
 

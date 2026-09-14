@@ -32,10 +32,12 @@ wrong.
 | 5 | Genetec discovers, adds, displays, records | Discovery + full ONVIF interrogation working against real Genetec 5.14 |
 | 6 | XProtect discovers, adds, displays, records | **Built, not verified** — needs XProtect |
 | 7 | Stability, reconnect, sleep/resume | Implemented; soak run done, 24-hour run outstanding |
+| — | Multiple cameras (scope override) | **Built, unit-tested, not verified** — two ONVIF hosts coexist in-process; never added to a VMS, never soaked |
 
 Phases 5 and 6 are code-complete: everything a VMS asks for is implemented and
-passes an independent ONVIF probe. What has *not* happened is an actual add
-against Genetec or XProtect. See "Verifying against a real VMS" below.
+passes an independent ONVIF probe. Genetec 5.14 has added a single camera (see
+"What Genetec actually calls"); XProtect has not been tried, and neither VMS has
+seen two Screen2VMS cameras at once. See "Verifying against a real VMS" below.
 
 ---
 
@@ -59,6 +61,51 @@ Settled with the project owner. Do not relitigate.
 - **Target framework: `net8.0`** (`net8.0-windows` where Windows APIs are used).
 - **Test targets: both Genetec and XProtect are available** on the owner's
   network.
+
+---
+
+## Multi-camera (scope override)
+
+`PROJECT_INSTRUCTIONS.md` §3 lists "multiple cameras" under "Out of scope for
+v0.1", and it never reappears in the §71 post-MVP roadmap. **That exclusion
+was reversed by the project owner**, who asked for a live grid of every
+selected camera plus independent publishing, and confirmed explicitly when
+asked that this is a deliberate override, not an oversight. Recorded here so
+nobody re-reads §3 and "fixes" the app back to one camera.
+
+The shape chosen was **multiple independent ONVIF devices from one process**,
+not one ONVIF device with multiple media profiles (the other standard way a
+multi-sensor camera exposes several streams). Each configured camera —
+`CameraProfile` in `AppConfiguration.Cameras` — gets its own persistent
+serial/MAC (`DeviceIdentity`, same generation rules as before), its own RTSP
+port and ONVIF port (default allocation in `CameraProfileDefaults`, 8554/8000
+plus an offset per camera), and its own `Screen2VmsRuntime` instance, owned by
+`Screen2VMS.Engine.CameraRuntimeManager`. So Genetec/XProtect see N separate
+units to add, not one device with N channels.
+
+This works because `Screen2VmsRuntime` already had no static or shared
+state — one runtime is one `StreamManager` (camera+encoder+RTSP) plus one
+`OnvifServiceHost` (Kestrel+CoreWCF+WS-Discovery), entirely parameterised by
+the `AppConfiguration`/ports/identity passed to `Start`. Running several was
+mostly a matter of not sharing anything between them, not a rewrite.
+
+**The one real unknown was WS-Discovery.** Every `OnvifServiceHost` wires its
+own `SharpOnvifServer.AddOnvifDiscovery` to UDP 3702 (`BuildDiscoveryOptions`
+in `OnvifServiceHost.cs`). Two hosts in the same process both binding that
+multicast port had never been exercised before. `MultiCameraOnvifHostTests`
+in `tests/Screen2VMS.Tests` starts two hosts with distinct ports/identities
+and asserts both come up — **run this test before trusting anything else
+about multi-camera on a given machine.** If it ever starts failing (address
+already in use on the second host's discovery socket), the in-process design
+does not hold and each additional camera needs its own OS process instead
+(`Screen2VMS.exe --camera-profile <id> --headless`, not yet built) — do not
+try to patch around a genuine failure here.
+
+An old single-camera `config.json` is migrated automatically
+(`JsonConfigurationService.MigrateLegacySingleCamera`) into one
+`CameraProfile`, reusing the existing identity and ports unchanged so an
+already-enrolled Genetec/Milestone unit is not treated as a new device after
+upgrading.
 
 ---
 
@@ -136,6 +183,18 @@ Camera → Encoder → EncodedFrame → StreamManager → RtspServer → clients
                        OnvifServiceHost ┘  (metadata, URIs and snapshots only)
 ```
 
+That whole pipeline is one `Screen2VmsRuntime`. `CameraRuntimeManager` (`Screen2VMS.Engine`) owns
+one of these per configured `CameraProfile`, each on its own RTSP/ONVIF ports
+and identity, all running in the same process (see "Multi-camera (scope
+override)" above):
+
+```
+CameraRuntimeManager
+ ├─ Screen2VmsRuntime (profile 1) → own StreamManager → own OnvifServiceHost
+ ├─ Screen2VmsRuntime (profile 2) → own StreamManager → own OnvifServiceHost
+ └─ ...
+```
+
 Two rules keep this honest:
 
 - **The RTSP server never touches the camera.** It consumes encoded frames.
@@ -166,6 +225,44 @@ without WPF (spec 58, 59).
 
 ## Things that will bite you
 
+**Two ONVIF hosts in one process both bind WS-Discovery on UDP 3702.** That is
+how multi-camera coexists in a single process — see "Multi-camera (scope
+override)" above. `MultiCameraOnvifHostTests` is the test that proves it still
+works; if it starts failing, that is a real architectural blocker, not
+something to patch around.
+
+**The firewall button is a sync, and its script must never see a device
+name.** `FirewallRules.TrySync` removes every rule in the `Screen2VMS` group plus
+the legacy display names, then creates exactly `FirewallRules.For(config)`.
+Three things in there are deliberate:
+
+- **Rules are named by kind and port, never by camera name.** Names used to be
+  `Screen2VMS RTSP (<camera name>)`. Two identical webcams then shared a name,
+  so the second deleted the first. A name with an apostrophe also broke the
+  elevated script, and device names come from firmware, so they don't belong
+  in a command running as administrator. `FirewallRulesTests` feeds a hostile
+  name through and asserts it never reaches the script.
+- **Removal uses `Remove-NetFirewallRule -Group/-DisplayName`, never
+  `Get-NetFirewallRule … | Remove-NetFirewallRule`.** The filter stays inside
+  the one command. Do not "tidy" it into a pipeline.
+- **The legacy patterns are `Screen2VMS RTSP*`, `Screen2VMS ONVIF*` and
+  `Screen2VMS WS-Discovery*`, not `Screen2VMS*`.** Windows' own first-run prompt
+  creates rules named exactly `Screen2VMS`, and those belong to the user. A
+  `-WhatIf` dry run on the owner's machine matched only the three old
+  single-camera rules and not Windows' four.
+
+Removing a camera deliberately does not touch the firewall (that would be a UAC
+prompt per Remove). It shows a notice pointing at the button instead.
+`MainViewModel.ShowNotice` exists because the once-a-second status refresh
+used to overwrite every action result, including "Firewall rules created",
+before anyone could read it.
+
+**The test project must reference every project its tests import.** The
+multi-camera branch was pushed from a Linux session that cannot build
+`net8.0-windows`, and `CameraRuntimeManagerTests` shipped without a reference to
+`Screen2VMS.Engine`, so the solution did not compile. Build on Windows before
+trusting a commit that claims tests pass.
+
 **Media Foundation objects are not agile.** Anything created on one thread must
 be used on that thread. Capture and encoding each own a dedicated MTA thread;
 enumeration uses `MtaRunner`. Never touch a COM object from the WPF UI thread.
@@ -187,11 +284,14 @@ not throw — they run on the capture thread.
 Media Foundation inserts whatever decoder the camera needs, so an MJPEG-only
 webcam still arrives as NV12 and the encoder gets its native input.
 
-**Device identity must be stable across restarts.** The serial number and the
-synthetic MAC are generated once into `config.json`. Genetec keys on the serial,
-Milestone on the MAC. Change either and the VMS treats this as a new camera.
+**Device identity must be stable across restarts.** Each camera profile's
+serial number and synthetic MAC are generated once into `config.json`.
+Genetec keys on the serial, Milestone on the MAC. Change either and the VMS
+treats that camera as new.
 
-**The ONVIF password is generated per install** and stored DPAPI-encrypted
+**The ONVIF password is generated per camera profile** (the tile generates it
+on first load; a migrated single-camera config keeps its old one) and stored
+DPAPI-encrypted
 (machine scope, so a future service account can read it). There is deliberately
 no default password. A config copied from another machine will not decrypt, and
 that is treated as "no password set" rather than an error.
@@ -209,9 +309,26 @@ fault — Settings → Privacy & security → Camera.
 ```bash
 cd Screen2VMS
 dotnet build                                          # whole solution
-dotnet test tests/Screen2VMS.Tests                    # 69 tests, no hardware needed
+dotnet test tests/Screen2VMS.Tests                    # 100 tests, no hardware needed
 dotnet run --project src/Screen2VMS.App               # the GUI
+.\tools\Publish.ps1                                   # single-file dist\Screen2VMS.exe
 ```
+
+The single-file publish exists twice: `tools/Publish.ps1` (terminal and CI) and
+`src/Screen2VMS.App/Properties/PublishProfiles/FolderProfile.pubxml` (Visual
+Studio's Publish dialog). **Change the switches in both.** The profile is not a
+straight copy. A publish profile's properties reach only the App project, not
+the projects it references, so `DebugType=none` alone still copies ten
+referenced `.pdb` files into `dist`. `AllowedReferenceRelatedFileExtensions`
+is what stops that. `Publish.ps1` doesn't need it because its `-p:` switches are
+global properties.
+
+CI is `.github/workflows/screen2vms.yml` at the repo root, on `windows-latest`.
+It builds, tests and publishes on every push touching `Screen2VMS/`. A
+`screen2vms-v<version>` tag also creates a **draft** release, and only if the tag
+matches `<Version>` in `Directory.Build.props`. The owner publishes the draft by
+hand. Releases are tagged with the project prefix because this repo holds more
+than one project.
 
 Runtime state lives in `%ProgramData%\Screen2VMS\` — `config.json` and `Logs\`.
 Deleting `config.json` regenerates the device identity and password, which makes
@@ -255,9 +372,16 @@ This is the outstanding work. Both platforms need the same three things:
 1. The device on the same subnet as the VMS server. **WS-Discovery is multicast
    and does not cross subnets** — on a different VLAN the unit must be added by
    IP instead, which is supported but is a different test.
-2. Inbound TCP 8554, TCP 8000 and UDP 3702 allowed. The window has a
-   **Firewall Rules** button that creates them (one UAC prompt).
-3. The user name and password shown in the window.
+2. Inbound UDP 3702 plus each camera's RTSP and ONVIF ports allowed (8554/8000
+   for the first camera, then the next pair — `CameraProfileDefaults`). The
+   **Firewall Rules** button syncs the rules to the cameras configured at the
+   time it is pressed (one UAC prompt).
+3. The user name and password shown on that camera's tile. Every camera has its
+   own.
+
+Every camera reports the same `Screen2VMS Virtual Camera` name in discovery and
+`GetDeviceInformation` (`OnvifDeviceInfo.Name` is never set per profile), so a
+multi-camera test has to tell units apart by port or serial.
 
 Capture the SOAP exchanges into `docs/protocol/genetec/` and
 `docs/protocol/xprotect/` as they are gathered (spec 67) — the goal is not valid
@@ -406,6 +530,7 @@ selection, so if the new camera offers the same resolution or frame rate as the
 old one — 30 fps is near universal — no notification fires and the box sits
 blank while the view model still holds a perfectly good value.
 
-`RebuildModeLists` and `RebuildFrameRates` therefore assign the backing field
+`RebuildModeLists` and `RebuildFrameRates` (now in `CameraTileViewModel`, one
+per tile) therefore assign the backing field
 directly and raise the notification unconditionally, guarded by `rebuilding` so
 the transient nulls the combo boxes push back during the rebuild are ignored.

@@ -6,6 +6,7 @@
 
         <views:InverseBooleanConverter x:Key="InverseBoolean" />
         <views:BooleanToCollapsedConverter x:Key="BooleanToCollapsed" />
+        <views:BooleanToVisibleConverter x:Key="BooleanToVisible" />
         <views:CameraStateToBrushConverter x:Key="StateToBrush" />
         <views:ComponentStateToBrushConverter x:Key="ComponentStateToBrush" />
 
