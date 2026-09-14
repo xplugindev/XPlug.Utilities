@@ -28,7 +28,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly Dispatcher dispatcher;
 
     private CameraDevice? deviceToAdd;
+    /// <summary>How long a one-off message outlives the once-a-second status refresh.</summary>
+    private static readonly TimeSpan NoticeDuration = TimeSpan.FromSeconds(10);
+
     private string statusMessage = "Add a camera to get started.";
+    private string? notice;
+    private DateTime noticeExpiresUtc;
     private bool disposed;
 
     public MainViewModel(
@@ -194,7 +199,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         configuration.Update(config => config with { Cameras = config.Cameras.Where(p => p.Id != tile.Id).ToList() });
 
         RefreshDevices();
-        UpdateStatusMessage();
+
+        // Closing its ports needs elevation, and a UAC prompt on every Remove
+        // would be worse than a hint: the next Firewall Rules sync removes them.
+        ShowNotice($"Removed {tile.Name}. If you created firewall rules, press Firewall Rules to close its ports.");
         RaiseCommandStates();
     }
 
@@ -233,8 +241,30 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RaiseCommandStates();
     }
 
+    /// <summary>
+    /// Shows a message that the once-a-second refresh leaves alone for a while.
+    /// Without this, the result of an action was overwritten within a second.
+    /// </summary>
+    private void ShowNotice(string message)
+    {
+        notice = message;
+        noticeExpiresUtc = DateTime.UtcNow + NoticeDuration;
+        UpdateStatusMessage();
+    }
+
     private void UpdateStatusMessage()
     {
+        if (notice is not null)
+        {
+            if (DateTime.UtcNow < noticeExpiresUtc)
+            {
+                StatusMessage = notice;
+                return;
+            }
+
+            notice = null;
+        }
+
         if (Cameras.Count == 0)
         {
             StatusMessage = AvailableDevices.Count == 0
@@ -279,18 +309,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void CreateFirewallRules()
     {
-        var rules = new List<FirewallRules.Rule> { new(FirewallRules.DiscoveryRuleName, "UDP", configuration.Current.Discovery.Port) };
+        // A full sync: rules for removed cameras and from older versions go too.
+        var rules = FirewallRules.For(configuration.Current);
+        var cameraCount = configuration.Current.Cameras.Count;
 
-        foreach (var profile in configuration.Current.Cameras)
-        {
-            var label = profile.Camera.Name ?? profile.Id;
-            rules.Add(new FirewallRules.Rule($"Screen2VMS RTSP ({label})", "TCP", profile.Rtsp.Port));
-            rules.Add(new FirewallRules.Rule($"Screen2VMS ONVIF ({label})", "TCP", profile.Onvif.Port));
-        }
-
-        StatusMessage = FirewallRules.TryCreate(rules, logger)
-            ? "Firewall rules created."
-            : "Firewall rules were not created. Administrator approval is required.";
+        ShowNotice(FirewallRules.TrySync(rules, logger)
+            ? cameraCount == 0
+                ? "Firewall rules removed - no cameras are configured."
+                : $"Firewall rules updated for {cameraCount} camera(s)."
+            : "Firewall rules were not changed. Administrator approval is required.");
     }
 
     private void OpenLogs()

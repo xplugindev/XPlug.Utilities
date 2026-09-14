@@ -197,11 +197,12 @@ Run the tests with:
 dotnet test tests/Screen2VMS.Tests
 ```
 
-86 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
+100 tests covering mode negotiation, H.264 bitstream parsing, pixel conversion,
 ONVIF discovery scopes, credential protection, configuration round-tripping and
 migration, per-camera port allocation, the multi-camera runtime manager, the
-ONVIF host's start/stop lifecycle, and two ONVIF hosts running side by side.
-None of them need a camera.
+ONVIF host's start/stop lifecycle, two ONVIF hosts running side by side, and
+the firewall rules and elevated script. None of them need a camera or
+administrator rights.
 
 ## Continuous integration and releases
 
@@ -240,8 +241,9 @@ SSH needs nothing extra.
    multicast and does not cross subnets; from another VLAN, add the device by IP
    instead.
 2. Press **Firewall Rules** if inbound traffic is blocked. This is the only
-   action that asks for administrator rights. It opens the ports of every camera
-   added *so far*, so press it again after adding another camera.
+   action that asks for administrator rights. It makes the firewall match the
+   cameras configured right now, so press it again after adding or removing a
+   camera.
 3. Start the cameras you want to add.
 4. In the VMS, add an ONVIF device and run discovery. Each running camera
    appears as its own "Screen2VMS Virtual Camera". They all carry that same
@@ -253,11 +255,20 @@ SSH needs nothing extra.
 **Milestone XProtect** — Management Client → Add Hardware → ONVIF driver →
 discover.
 
-Firewall rules are named per camera, e.g. `Screen2VMS RTSP (Integrated Camera)`.
-Two cleanups are left to you in *Windows Defender Firewall → Inbound Rules*:
-removing a camera does not delete its rules, and the older single-camera rules
-(`Screen2VMS RTSP` and `Screen2VMS ONVIF`, without a camera name) are not
-replaced by the new ones.
+**How the Firewall Rules button works.** Each press removes every Screen2VMS
+port rule and creates exactly the rules the current cameras need: one for
+WS-Discovery, plus RTSP and ONVIF for each camera. The rules are in the
+`Screen2VMS` group and named by port, e.g. `Screen2VMS RTSP (TCP 8555)`, so two
+identical webcams can't collide. Rules from older versions
+(`Screen2VMS RTSP`, `Screen2VMS ONVIF`, `Screen2VMS WS-Discovery`, and the
+per-camera-name ones) are removed too.
+
+Removing a camera doesn't touch the firewall, because that would mean a UAC
+prompt on every Remove. The status bar reminds you to press **Firewall Rules**,
+which closes the removed camera's ports.
+
+Rules named just `Screen2VMS` are the ones Windows creates when you click Allow
+on its own first-run prompt. The button leaves those alone.
 
 ---
 

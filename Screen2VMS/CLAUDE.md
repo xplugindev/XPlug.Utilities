@@ -231,12 +231,31 @@ override)" above. `MultiCameraOnvifHostTests` is the test that proves it still
 works; if it starts failing, that is a real architectural blocker, not
 something to patch around.
 
-**Firewall rule names changed with multi-camera.** Rules are now
-`Screen2VMS RTSP (<camera name>)` / `Screen2VMS ONVIF (<camera name>)`, and
-`FirewallRules.TryCreate` removes only the names it is about to add. So the
-old single-camera `Screen2VMS RTSP` / `Screen2VMS ONVIF` rules are never
-cleaned up, removing a camera leaves its rules behind, and two cameras with the
-same device name would share a rule name — the second replaces the first.
+**The firewall button is a sync, and its script must never see a device
+name.** `FirewallRules.TrySync` removes every rule in the `Screen2VMS` group plus
+the legacy display names, then creates exactly `FirewallRules.For(config)`.
+Three things in there are deliberate:
+
+- **Rules are named by kind and port, never by camera name.** Names used to be
+  `Screen2VMS RTSP (<camera name>)`. Two identical webcams then shared a name,
+  so the second deleted the first. A name with an apostrophe also broke the
+  elevated script, and device names come from firmware, so they don't belong
+  in a command running as administrator. `FirewallRulesTests` feeds a hostile
+  name through and asserts it never reaches the script.
+- **Removal uses `Remove-NetFirewallRule -Group/-DisplayName`, never
+  `Get-NetFirewallRule … | Remove-NetFirewallRule`.** The filter stays inside
+  the one command. Do not "tidy" it into a pipeline.
+- **The legacy patterns are `Screen2VMS RTSP*`, `Screen2VMS ONVIF*` and
+  `Screen2VMS WS-Discovery*`, not `Screen2VMS*`.** Windows' own first-run prompt
+  creates rules named exactly `Screen2VMS`, and those belong to the user. A
+  `-WhatIf` dry run on the owner's machine matched only the three old
+  single-camera rules and not Windows' four.
+
+Removing a camera deliberately does not touch the firewall (that would be a UAC
+prompt per Remove). It shows a notice pointing at the button instead.
+`MainViewModel.ShowNotice` exists because the once-a-second status refresh
+used to overwrite every action result, including "Firewall rules created",
+before anyone could read it.
 
 **The test project must reference every project its tests import.** The
 multi-camera branch was pushed from a Linux session that cannot build
@@ -290,7 +309,7 @@ fault — Settings → Privacy & security → Camera.
 ```bash
 cd Screen2VMS
 dotnet build                                          # whole solution
-dotnet test tests/Screen2VMS.Tests                    # 86 tests, no hardware needed
+dotnet test tests/Screen2VMS.Tests                    # 100 tests, no hardware needed
 dotnet run --project src/Screen2VMS.App               # the GUI
 .\tools\Publish.ps1                                   # single-file dist\Screen2VMS.exe
 ```
@@ -355,7 +374,7 @@ This is the outstanding work. Both platforms need the same three things:
    IP instead, which is supported but is a different test.
 2. Inbound UDP 3702 plus each camera's RTSP and ONVIF ports allowed (8554/8000
    for the first camera, then the next pair — `CameraProfileDefaults`). The
-   **Firewall Rules** button creates rules for every camera configured at the
+   **Firewall Rules** button syncs the rules to the cameras configured at the
    time it is pressed (one UAC prompt).
 3. The user name and password shown on that camera's tile. Every camera has its
    own.
