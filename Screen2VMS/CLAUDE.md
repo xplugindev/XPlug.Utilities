@@ -62,6 +62,51 @@ Settled with the project owner. Do not relitigate.
 
 ---
 
+## Multi-camera (scope override)
+
+`PROJECT_INSTRUCTIONS.md` §3 lists "multiple cameras" under "Out of scope for
+v0.1", and it never reappears in the §71 post-MVP roadmap. **That exclusion
+was reversed by the project owner**, who asked for a live grid of every
+selected camera plus independent publishing, and confirmed explicitly when
+asked that this is a deliberate override, not an oversight. Recorded here so
+nobody re-reads §3 and "fixes" the app back to one camera.
+
+The shape chosen was **multiple independent ONVIF devices from one process**,
+not one ONVIF device with multiple media profiles (the other standard way a
+multi-sensor camera exposes several streams). Each configured camera —
+`CameraProfile` in `AppConfiguration.Cameras` — gets its own persistent
+serial/MAC (`DeviceIdentity`, same generation rules as before), its own RTSP
+port and ONVIF port (default allocation in `CameraProfileDefaults`, 8554/8000
+plus an offset per camera), and its own `Screen2VmsRuntime` instance, owned by
+`Screen2VMS.Engine.CameraRuntimeManager`. So Genetec/XProtect see N separate
+units to add, not one device with N channels.
+
+This works because `Screen2VmsRuntime` already had no static or shared
+state — one runtime is one `StreamManager` (camera+encoder+RTSP) plus one
+`OnvifServiceHost` (Kestrel+CoreWCF+WS-Discovery), entirely parameterised by
+the `AppConfiguration`/ports/identity passed to `Start`. Running several was
+mostly a matter of not sharing anything between them, not a rewrite.
+
+**The one real unknown was WS-Discovery.** Every `OnvifServiceHost` wires its
+own `SharpOnvifServer.AddOnvifDiscovery` to UDP 3702 (`BuildDiscoveryOptions`
+in `OnvifServiceHost.cs`). Two hosts in the same process both binding that
+multicast port had never been exercised before. `MultiCameraOnvifHostTests`
+in `tests/Screen2VMS.Tests` starts two hosts with distinct ports/identities
+and asserts both come up — **run this test before trusting anything else
+about multi-camera on a given machine.** If it ever starts failing (address
+already in use on the second host's discovery socket), the in-process design
+does not hold and each additional camera needs its own OS process instead
+(`Screen2VMS.exe --camera-profile <id> --headless`, not yet built) — do not
+try to patch around a genuine failure here.
+
+An old single-camera `config.json` is migrated automatically
+(`JsonConfigurationService.MigrateLegacySingleCamera`) into one
+`CameraProfile`, reusing the existing identity and ports unchanged so an
+already-enrolled Genetec/Milestone unit is not treated as a new device after
+upgrading.
+
+---
+
 ## Corrections to the spec
 
 **Spec 66 said to evaluate ONVIF libraries first, and an earlier version of this
@@ -136,6 +181,18 @@ Camera → Encoder → EncodedFrame → StreamManager → RtspServer → clients
                        OnvifServiceHost ┘  (metadata, URIs and snapshots only)
 ```
 
+is one `Screen2VmsRuntime`. `CameraRuntimeManager` (`Screen2VMS.Engine`) owns
+one of these per configured `CameraProfile`, each on its own RTSP/ONVIF ports
+and identity, all running in the same process (see "Multi-camera (scope
+override)" above):
+
+```
+CameraRuntimeManager
+ ├─ Screen2VmsRuntime (profile 1) → own StreamManager → own OnvifServiceHost
+ ├─ Screen2VmsRuntime (profile 2) → own StreamManager → own OnvifServiceHost
+ └─ ...
+```
+
 Two rules keep this honest:
 
 - **The RTSP server never touches the camera.** It consumes encoded frames.
@@ -166,6 +223,12 @@ without WPF (spec 58, 59).
 
 ## Things that will bite you
 
+**Two ONVIF hosts in one process both bind WS-Discovery on UDP 3702.** That is
+how multi-camera coexists in a single process — see "Multi-camera (scope
+override)" above. `MultiCameraOnvifHostTests` is the test that proves it still
+works; if it starts failing, that is a real architectural blocker, not
+something to patch around.
+
 **Media Foundation objects are not agile.** Anything created on one thread must
 be used on that thread. Capture and encoding each own a dedicated MTA thread;
 enumeration uses `MtaRunner`. Never touch a COM object from the WPF UI thread.
@@ -187,9 +250,10 @@ not throw — they run on the capture thread.
 Media Foundation inserts whatever decoder the camera needs, so an MJPEG-only
 webcam still arrives as NV12 and the encoder gets its native input.
 
-**Device identity must be stable across restarts.** The serial number and the
-synthetic MAC are generated once into `config.json`. Genetec keys on the serial,
-Milestone on the MAC. Change either and the VMS treats this as a new camera.
+**Device identity must be stable across restarts.** Each camera profile's
+serial number and synthetic MAC are generated once into `config.json`.
+Genetec keys on the serial, Milestone on the MAC. Change either and the VMS
+treats that camera as new.
 
 **The ONVIF password is generated per install** and stored DPAPI-encrypted
 (machine scope, so a future service account can read it). There is deliberately

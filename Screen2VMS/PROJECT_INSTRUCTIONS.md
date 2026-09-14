@@ -64,7 +64,7 @@ Do not implement advanced features until this end-to-end scenario works.
 
 ## 3. Out of scope for v0.1
 
-Screen capture, desktop capture, window capture, multiple cameras, multiple
+Screen capture, desktop capture, window capture, ~~multiple cameras~~, multiple
 streams, H.265, AV1, PTZ, digital zoom, audio, motion detection, AI analytics,
 metadata, ONVIF events, ONVIF recording, edge storage, cloud connectivity, cloud
 management, mobile app, remote access, user accounts beyond camera
@@ -73,6 +73,12 @@ focus), firmware update, network configuration, a configuration web portal, a
 VMS plugin, a database, a cloud API, Docker, Kubernetes.
 
 Keep the MVP intentionally small.
+
+> **Multiple cameras was reinstated post-MVP by owner decision.** Read
+> `CLAUDE.md`'s "Multi-camera (scope override)" section before touching
+> anything camera-related — it records why, and the one architectural risk
+> (WS-Discovery coexistence) that decision depends on. As with §22-26 and §66,
+> `CLAUDE.md` corrects this spec; this file is left as written for history.
 
 ## 4. Product name
 

@@ -112,6 +112,47 @@ public class ConfigurationTests : IDisposable
     }
 
     [Fact]
+    public void Load_MigratesAPreMultiCameraConfigFile_IntoOneCameraProfile()
+    {
+        // A config.json written before multi-camera support has no "cameras"
+        // array. The camera a VMS already enrolled must come back as exactly
+        // one profile, with its identity, ports and settings unchanged - or
+        // the VMS would treat it as a new, unknown unit.
+        File.WriteAllText(configFile, """
+            {
+                "device": { "serialNumber": "S2V-LEGACY000001", "macAddress": "021A2B3C4D5E" },
+                "camera": { "deviceId": "\\\\?\\usb#legacy", "name": "Legacy Cam", "width": 1280, "height": 720, "fps": 15 },
+                "rtsp": { "port": 9554, "path": "/main" },
+                "onvif": { "port": 8081, "username": "operator" }
+            }
+            """);
+
+        var configuration = new JsonConfigurationService(configFile).Load();
+
+        var profile = Assert.Single(configuration.Cameras);
+        Assert.Equal("S2V-LEGACY000001", profile.Device.SerialNumber);
+        Assert.Equal("021A2B3C4D5E", profile.Device.MacAddress);
+        Assert.Equal(@"\\?\usb#legacy", profile.Camera.DeviceId);
+        Assert.Equal("Legacy Cam", profile.Camera.Name);
+        Assert.Equal(9554, profile.Rtsp.Port);
+        Assert.Equal(8081, profile.Onvif.Port);
+
+        // Loading again must not migrate a second time.
+        var reloaded = new JsonConfigurationService(configFile).Load();
+        Assert.Single(reloaded.Cameras);
+    }
+
+    [Fact]
+    public void Load_WithNoLegacyCameraSelected_StaysWithNoProfiles()
+    {
+        // A brand-new installation has no legacy DeviceId to migrate; it
+        // should start with zero camera profiles, not a phantom one.
+        var configuration = new JsonConfigurationService(configFile).Load();
+
+        Assert.Empty(configuration.Cameras);
+    }
+
+    [Fact]
     public void NewMacAddress_IsLocallyAdministeredAndUnicast()
     {
         // Bit 1 set marks the address as locally assigned; bit 0 clear keeps it

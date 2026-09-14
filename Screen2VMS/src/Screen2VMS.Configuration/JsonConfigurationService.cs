@@ -45,10 +45,11 @@ public sealed class JsonConfigurationService : IConfigurationService
                 var loaded = JsonSerializer.Deserialize<AppConfiguration>(json, SerializerOptions);
                 if (loaded is not null)
                 {
-                    current = EnsureIdentity(loaded);
+                    current = MigrateLegacySingleCamera(EnsureIdentity(loaded));
 
-                    // A first run, or an upgrade that added identity fields,
-                    // writes the completed file straight back.
+                    // A first run, an upgrade that added identity fields, or a
+                    // migration from the single-camera schema writes the
+                    // completed file straight back.
                     if (!ReferenceEquals(current, loaded))
                     {
                         Save(current);
@@ -134,5 +135,32 @@ public sealed class JsonConfigurationService : IConfigurationService
                     : macAddress,
             },
         };
+    }
+
+    /// <summary>
+    /// Turns a pre-multi-camera config.json into one <see cref="CameraProfile"/>.
+    /// </summary>
+    /// <remarks>
+    /// Reuses the existing device identity, camera settings and ports
+    /// unchanged, so a camera a VMS has already enrolled keeps the same
+    /// serial number, MAC and stream URI after upgrading - only the shape of
+    /// the file changes, not what a VMS sees on the wire.
+    /// </remarks>
+    private static AppConfiguration MigrateLegacySingleCamera(AppConfiguration configuration)
+    {
+        if (configuration.Cameras.Count > 0 || string.IsNullOrEmpty(configuration.Camera.DeviceId))
+        {
+            return configuration;
+        }
+
+        var profile = new CameraProfile
+        {
+            Device = configuration.Device,
+            Camera = configuration.Camera,
+            Rtsp = configuration.Rtsp,
+            Onvif = configuration.Onvif,
+        };
+
+        return configuration with { Cameras = [profile] };
     }
 }

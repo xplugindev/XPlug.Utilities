@@ -26,6 +26,16 @@ public sealed class BooleanToCollapsedConverter : IValueConverter
         throw new NotSupportedException();
 }
 
+/// <summary>Shows an element when the bound boolean is true, e.g. a "camera missing" warning.</summary>
+public sealed class BooleanToVisibleConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is true ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 /// <summary>Colours the status dot by camera state (spec 63).</summary>
 public sealed class CameraStateToBrushConverter : IValueConverter
 {

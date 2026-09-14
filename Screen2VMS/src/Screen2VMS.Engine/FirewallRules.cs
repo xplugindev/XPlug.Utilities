@@ -24,32 +24,38 @@ namespace Screen2VMS.Engine;
 [SupportedOSPlatform("windows")]
 public static class FirewallRules
 {
-    public const string RtspRuleName = "Screen2VMS RTSP";
-    public const string OnvifRuleName = "Screen2VMS ONVIF";
     public const string DiscoveryRuleName = "Screen2VMS WS-Discovery";
 
+    /// <summary>One inbound rule to create: a display name, a protocol ("TCP"/"UDP") and a port.</summary>
+    public readonly record struct Rule(string Name, string Protocol, int Port);
+
     /// <summary>
-    /// Adds inbound rules for the RTSP, ONVIF and discovery ports.
+    /// Adds inbound rules for every port passed in, replacing whatever
+    /// Screen2VMS rules already exist under those same names.
     /// </summary>
     /// <remarks>
     /// Triggers a UAC prompt. Returns false if the user declined it or the
     /// helper failed, which is not fatal - it just means the ports may be
-    /// blocked.
+    /// blocked. Every camera's RTSP and ONVIF ports are passed in alongside
+    /// the one shared WS-Discovery port, since several cameras publish from
+    /// the same process (spec override, see CLAUDE.md "multi-camera").
     /// </remarks>
-    public static bool TryCreate(int rtspPort, int onvifPort, int discoveryPort, ILogger? logger = null)
+    public static bool TryCreate(IReadOnlyCollection<Rule> rules, ILogger? logger = null)
     {
+        ArgumentNullException.ThrowIfNull(rules);
         logger ??= NullLogger.Instance;
+
+        if (rules.Count == 0)
+        {
+            return true;
+        }
 
         // Existing rules are removed first so changing a port does not leave a
         // stale rule behind that still allows the old one.
         var script = string.Join(
             "; ",
-            RemoveCommand(RtspRuleName),
-            RemoveCommand(OnvifRuleName),
-            RemoveCommand(DiscoveryRuleName),
-            AddCommand(RtspRuleName, "TCP", rtspPort),
-            AddCommand(OnvifRuleName, "TCP", onvifPort),
-            AddCommand(DiscoveryRuleName, "UDP", discoveryPort));
+            rules.Select(rule => RemoveCommand(rule.Name))
+                .Concat(rules.Select(rule => AddCommand(rule.Name, rule.Protocol, rule.Port))));
 
         try
         {
@@ -74,10 +80,8 @@ public static class FirewallRules
             if (created)
             {
                 logger.LogInformation(
-                    "Firewall rules created for TCP {RtspPort}, TCP {OnvifPort} and UDP {DiscoveryPort}.",
-                    rtspPort,
-                    onvifPort,
-                    discoveryPort);
+                    "Firewall rules created for {Rules}.",
+                    string.Join(", ", rules.Select(rule => $"{rule.Protocol} {rule.Port}")));
             }
             else
             {

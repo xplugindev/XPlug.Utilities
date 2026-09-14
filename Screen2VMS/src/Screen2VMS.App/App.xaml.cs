@@ -93,7 +93,7 @@ public partial class App : Application
         collection.AddLogging();
         collection.AddSingleton(configuration);
         collection.AddSingleton<ICameraSourceService, MediaFoundationCameraSourceService>();
-        collection.AddSingleton<Screen2VmsRuntime>();
+        collection.AddSingleton<CameraRuntimeManager>();
         collection.AddSingleton(Dispatcher);
         collection.AddSingleton<MainViewModel>();
 
